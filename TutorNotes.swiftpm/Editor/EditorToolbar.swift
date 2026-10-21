@@ -351,7 +351,8 @@ struct EditorToolStrip: View {
             .popover(isPresented: $model.palettePresented) {
                 ColorPalettePicker(hex: Binding(get: { tools.colors[safe: tools.colorIndex] ?? "#1F2328" },
                                                 set: { tools.setColor($0, at: tools.colorIndex) }),
-                                   highlighter: tools.kind == .highlighter)
+                                   highlighter: tools.kind == .highlighter,
+                                   onEyedropper: { model.startEyedropper() })
                     .presentationCompactAdaptation(.popover)
             }
 
@@ -510,7 +511,8 @@ struct EditorToolStrip: View {
         .accessibilityLabel("Colour \(i + 1)")
         .popover(isPresented: Binding(get: { editingColorIndex == i }, set: { if !$0 { editingColorIndex = nil } })) {
             ColorPalettePicker(hex: Binding(get: { tools.colors[safe: i] ?? hex }, set: { tools.setColor($0, at: i) }),
-                               highlighter: tools.kind == .highlighter)
+                               highlighter: tools.kind == .highlighter,
+                               onEyedropper: { editingColorIndex = nil; model.startEyedropper() })
                 .presentationCompactAdaptation(.popover)
         }
     }
@@ -585,39 +587,6 @@ struct PenStylePicker: View {
         }
         .padding(16)
         .frame(width: 240)
-    }
-}
-
-struct ColorPalettePicker: View {
-    @Binding var hex: String
-    var highlighter: Bool
-
-    static let pens = ["#1F2328", "#495057", "#868E96", "#FFFFFF", "#1C64F2", "#4DABF7", "#0C8599", "#2F9E44",
-                       "#82C91E", "#F2C200", "#F76707", "#E03131", "#D6336C", "#AE3EC9", "#7048E8", "#5C3D2E"]
-    static let highlighters = ["#FFE066", "#FFD43B", "#8CE99A", "#69DB7C", "#74C0FC", "#A5D8FF", "#FFA8A8", "#FFC9C9",
-                               "#D0BFFF", "#E599F7", "#FFC078", "#C3FAE8"]
-
-    var body: some View {
-        let swatches = highlighter ? ColorPalettePicker.highlighters : ColorPalettePicker.pens
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Colour").font(.headline)
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: 10), count: 6), spacing: 10) {
-                ForEach(swatches, id: \.self) { s in
-                    Button {
-                        hex = s
-                    } label: {
-                        Circle().fill(Color(hex: s))
-                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.15)))
-                            .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: s.uppercased() == hex.uppercased() ? 3 : 0).padding(-4))
-                            .frame(width: 30, height: 30)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            ColorPicker("Custom", selection: Binding(get: { Color(hex: hex) }, set: { hex = UIColor($0).hexString }), supportsOpacity: false)
-        }
-        .padding(16)
-        .frame(width: 280)
     }
 }
 

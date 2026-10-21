@@ -51,6 +51,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     var tapGesture: UITapGestureRecognizer!
     var regionPan: UIPanGestureRecognizer!
     var longPress: UILongPressGestureRecognizer!
+    /// The pending one-shot colour sample, if the eyedropper is armed (see +Eyedropper).
+    var eyedropper: EyedropperSession?
 
     // Tutor state (see +Tutor)
     let presence = TutorPresenceView()
@@ -160,6 +162,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         displayLink?.invalidate()
         displayLink = nil
         holdTimer?.invalidate()
+        cancelEyedropper()
     }
 
     // MARK: Layout & zoom
@@ -539,6 +542,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         strokeObserver?.acceptsFinger = newTool.fingerDrawing
         strokeObserver?.isEnabled = newTool.shapeRecognition && (newTool.kind == .pen || newTool.kind == .highlighter) && replayTime == nil
         if !newTool.kind.usesPencilKit { hoverPreview.hide() }
+        eyedropperToolApplied()
     }
 
     // MARK: PencilKit

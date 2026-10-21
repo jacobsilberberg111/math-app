@@ -206,6 +206,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
     // MARK: Taps
 
     @objc func handleTap(_ g: UITapGestureRecognizer) {
+        if eyedropper != nil { finishEyedropper(at: g.location(in: chrome)); return }
         let docPoint = g.location(in: chrome)
         if replayTime != nil {
             host?.canvasReplayTapped(at: docPoint)
