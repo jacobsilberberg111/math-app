@@ -134,7 +134,7 @@ struct NoteEditorView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Allow Tutor Notes to use the microphone in Settings to record audio with your notes.")
+            Text("Allow Margin to use the microphone in Settings to record audio with your notes.")
         }
         .sheet(isPresented: $model.showPages) { PageNavigator(model: model) }
         .sheet(isPresented: $model.showPractice) { PracticeSheet(model: model) }

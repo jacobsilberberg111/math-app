@@ -1,8 +1,8 @@
 {
-  "name": "tutor-notes-server",
+  "name": "margin-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Authenticated relay between the Tutor Notes iPad app and the Claude API. Keeps the API key on the server.",
+  "description": "Authenticated relay between the Margin iPad app and the Claude API. Keeps the API key on the server.",
   "type": "module",
   "main": "server.mjs",
   "engines": {

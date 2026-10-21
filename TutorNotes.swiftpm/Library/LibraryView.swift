@@ -197,7 +197,7 @@ struct LibraryView: View {
                 }
             }
         }
-        .navigationTitle("Tutor Notes")
+        .navigationTitle("Margin")
         .toolbar {
             ToolbarItem(placement: .bottomBar) {
                 Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
@@ -437,7 +437,7 @@ struct OnboardingView: View {
             HStack(spacing: 14) {
                 TutorOrb(active: true, size: 44)
                 VStack(alignment: .leading) {
-                    Text("Tutor Notes").font(.largeTitle.bold())
+                    Text("Margin").font(.largeTitle.bold())
                     Text("Notes with a tutor who works on the page with you.").foregroundStyle(.secondary)
                 }
             }

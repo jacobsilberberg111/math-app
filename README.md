@@ -1,4 +1,4 @@
-# Tutor Notes
+# Margin
 
 An iPad note-taking app for Apple Pencil, with a built-in Claude tutor that works **on the page** with you. It writes in clean type (or handwriting, if you prefer), typesets math, draws graphs and diagrams, circles your mistakes, adds practice questions, and marks your answers live.
 

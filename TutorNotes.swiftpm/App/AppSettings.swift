@@ -163,8 +163,10 @@ final class AppSettings: ObservableObject {
         let d = UserDefaults.standard
         let storedKey = Keychain.read("apiKey") ?? ""
         apiKey = storedKey
-        serverURL = d.string(forKey: "serverURL") ?? ""
-        serverToken = Keychain.read("serverToken") ?? ""
+        let storedURL = d.string(forKey: "serverURL") ?? ""
+        serverURL = storedURL.isEmpty ? BuildConfig.serverURL : storedURL
+        let storedToken = Keychain.read("serverToken") ?? ""
+        serverToken = storedToken.isEmpty ? BuildConfig.serverToken : storedToken
         connection = TutorConnection(rawValue: d.string(forKey: "connection") ?? "") ?? (storedKey.isEmpty ? .server : .apiKey)
         tutorModel = d.string(forKey: "tutorModel") ?? ClaudeModelOption.sonnet.id
         effort = TutorEffort(rawValue: d.string(forKey: "effort") ?? "") ?? .medium
