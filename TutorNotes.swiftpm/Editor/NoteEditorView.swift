@@ -35,7 +35,6 @@ struct NoteEditorView: View {
     @Bindable var model: EditorModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(LibraryStore.self) private var library
     @EnvironmentObject var settings: AppSettings
     @State private var showPhotoPicker = false
@@ -55,15 +54,9 @@ struct NoteEditorView: View {
             EditorToolStrip(model: model)
             HStack(spacing: 0) {
                 canvasArea
-                if sizeClass != .compact { sidePanel }
+                TutorSidePanel(model: model)
             }
-            .overlay {
-                // Too narrow for a side panel (Split View, Slide Over): the tutor covers the canvas.
-                if model.showTutor && sizeClass == .compact {
-                    TutorPanel(model: model)
-                        .transition(.move(edge: .trailing))
-                }
-            }
+            .overlay { TutorOverlayPanel(model: model) }
         }
         .background(Color(uiColor: .systemBackground))
         .onAppear {
@@ -115,23 +108,6 @@ struct NoteEditorView: View {
         .sheet(item: $exportItem) { item in ShareSheet(items: [item.url]) }
         .statusBarHidden(false)
     }
-
-    /// The tutor beside the canvas. It stays mounted while hidden, so a half-typed question and the
-    /// chat's scroll position survive closing it, and it slides in by widening its container.
-    private var sidePanel: some View {
-        let shown = model.showTutor
-        return HStack(spacing: 0) {
-            Divider()
-            TutorPanel(model: model)
-                .frame(width: NoteEditorView.panelWidth)
-        }
-        .frame(width: shown ? NoteEditorView.panelWidth + 1 : 0, alignment: .leading)
-        .clipped()
-        .allowsHitTesting(shown)
-        .accessibilityHidden(!shown)
-    }
-
-    static let panelWidth: CGFloat = 392
 
     private var canvasArea: some View {
         GeometryReader { geo in
@@ -193,6 +169,45 @@ struct NoteEditorView: View {
     private func close() {
         model.close(library: library)
         dismiss()
+    }
+}
+
+// The tutor panel reads `showTutor` in views of its own. Read directly in NoteEditorView's body,
+// the change didn't re-render the editor until something else did (the toolbar button lit up, but
+// the panel stayed closed).
+
+/// The tutor beside the canvas in regular width. It stays mounted while hidden, so a half-typed
+/// question and the chat's scroll position survive closing it, and it slides in by widening.
+private struct TutorSidePanel: View {
+    @Bindable var model: EditorModel
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    private static let width: CGFloat = 392
+
+    var body: some View {
+        if sizeClass != .compact {
+            HStack(spacing: 0) {
+                Divider()
+                TutorPanel(model: model)
+                    .frame(width: Self.width)
+            }
+            .frame(width: model.showTutor ? Self.width + 1 : 0, alignment: .leading)
+            .clipped()
+            .allowsHitTesting(model.showTutor)
+            .accessibilityHidden(!model.showTutor)
+        }
+    }
+}
+
+/// Too narrow for a side panel (Split View, Slide Over): the tutor covers the canvas.
+private struct TutorOverlayPanel: View {
+    @Bindable var model: EditorModel
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    var body: some View {
+        if model.showTutor && sizeClass == .compact {
+            TutorPanel(model: model)
+                .transition(.move(edge: .trailing))
+        }
     }
 }
 
