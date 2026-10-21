@@ -1141,10 +1141,12 @@ final class CanvasActionExecutor {
         let full = awarded == q.marks, none = awarded == 0
         let purpose: InkPurpose = full ? .tick : (none ? .cross : .partial)
         let hex = full ? InkPalette.named["green"]! : (none ? InkPalette.named["red"]! : InkPalette.named["orange"]!)
-        let origin = CGPoint(x: pageWidth - 100, y: q.top + 2)
+        // In the right-hand margin just below the question line, clear of the printed "[n marks]".
+        let origin = CGPoint(x: pageWidth - 56, y: q.top + 26)
         let strokes = full ? HandDrawn.tick(at: origin, size: 26) : (none ? HandDrawn.cross(at: origin, size: 22) : HandDrawn.partial(at: origin, size: 26))
         var ids: [String] = []
-        if let e = inkElement(page: q.page, strokes: strokes, colorHex: hex, width: 3, purpose: purpose, label: "\(awarded)/\(q.marks)") {
+        if let e = inkElement(page: q.page, strokes: strokes, colorHex: hex, width: 3, purpose: purpose, label: "\(awarded)/\(q.marks)",
+                              labelAt: CGPoint(x: origin.x - 4, y: origin.y + 30)) {
             addInk(e)
             ids.append(e.id)
         }

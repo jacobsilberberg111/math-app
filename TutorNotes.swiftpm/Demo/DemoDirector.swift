@@ -428,7 +428,7 @@ final class DemoDirector {
         if var p = paper.document.content.paper { p.finishedAt = Date(); paper.document.content.paper = p }
         let endReply = beginTutorTurn(paper, studentText: "I've finished: mark my paper", thinking: "Q2: 2x² − 8x + 3x − 12 = 2x² − 5x − 12; sign slip on the constant. Q3 blank.")
         await wait(1.2)
-        await tool("annotate", #"{"page": 1, "mark": "circle", "x": 250, "y": 540, "width": 76, "height": 38, "label": "−12", "color": "red"}"#, model: paper, replyID: endReply)
+        await tool("annotate", #"{"page": 1, "mark": "circle", "x": 250, "y": 530, "width": 76, "height": 36, "label": "−12", "color": "red"}"#, model: paper, replyID: endReply)
         await tool("score_paper", #"{"label": "2", "awarded": 1, "feedback": "Expansion right, but 3 × −4 = −12."}"#, model: paper, replyID: endReply)
         await tool("score_paper", #"{"label": "3", "awarded": 0, "feedback": "Not attempted."}"#, model: paper, replyID: endReply)
         await tool("paper_summary", #"{"summary": "A strong start: your factorising was spot on. Question 2 lost a mark to a sign slip, and question 3 was left blank.", "strengths": ["Factorising quadratics"], "to_review": ["Signs when expanding brackets", "Sketching parabolas from their roots"], "next_steps": "Practise 5 expansions with negative terms, then sketch y = x² − 4 using its roots and y-intercept."}"#, model: paper, replyID: endReply)

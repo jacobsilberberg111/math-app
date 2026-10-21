@@ -52,6 +52,8 @@ struct NoteEditorView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var showPDFImporter = false
     @State private var showScanner = false
+    /// Mirror of model.showTutor that the panel layout reads (see onAppear).
+    @State private var panelShown = false
     @State private var exportItem: ExportItem?
 
     struct ExportItem: Identifiable {
@@ -68,12 +70,17 @@ struct NoteEditorView: View {
             PaperBar(model: model)
             HStack(spacing: 0) {
                 canvasArea
-                TutorSidePanel(model: model)
+                TutorSidePanel(model: model, shown: panelShown)
             }
-            .overlay { TutorOverlayPanel(model: model) }
+            .overlay { TutorOverlayPanel(model: model, shown: panelShown) }
         }
         .background(Color(uiColor: .systemBackground))
         .onAppear {
+            // The panel follows showTutor through plain view state. Observing showTutor directly
+            // from the layout intermittently missed a change while the canvas was busy (the
+            // toolbar button lit up but the panel stayed shut), so the model pushes it here.
+            panelShown = model.showTutor
+            model.onShowTutorChanged = { shown in panelShown = shown }
             model.document.onMetaChanged = { [weak library] meta in library?.update(meta) }
             DemoDirector.shared.editorAppeared(model)
             model.resumeStudyClock()
@@ -88,6 +95,7 @@ struct NoteEditorView: View {
             }
             if !settings.isTutorConfigured && !settings.hasSeenOnboarding { model.showTutor = true }
         }
+        .onDisappear { model.onShowTutorChanged = nil }
         .onChange(of: scenePhase) { old, phase in
             // Only leaving .active counts what came before (active → inactive → background).
             if phase == .active { model.resumeStudyClock() } else if old == .active { model.pauseStudyClock() }
@@ -172,7 +180,7 @@ struct NoteEditorView: View {
                     if model.audio.isRecording || (model.audio.showsPlayer && model.audio.activeRecording != nil) {
                         AudioBar(audio: model.audio)
                     }
-                    if model.document.isFreeform && !model.showTutor {
+                    if model.document.isFreeform && !panelShown {
                         BoardTutorBar(model: model)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
@@ -233,6 +241,7 @@ struct NoteEditorView: View {
 /// question and the chat's scroll position survive closing it, and it slides in by widening.
 private struct TutorSidePanel: View {
     @Bindable var model: EditorModel
+    let shown: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     private static let width: CGFloat = 392
 
@@ -243,10 +252,10 @@ private struct TutorSidePanel: View {
                 TutorPanel(model: model)
                     .frame(width: Self.width)
             }
-            .frame(width: model.showTutor ? Self.width + 1 : 0, alignment: .leading)
+            .frame(width: shown ? Self.width + 1 : 0, alignment: .leading)
             .clipped()
-            .allowsHitTesting(model.showTutor)
-            .accessibilityHidden(!model.showTutor)
+            .allowsHitTesting(shown)
+            .accessibilityHidden(!shown)
         }
     }
 }
@@ -254,10 +263,11 @@ private struct TutorSidePanel: View {
 /// Too narrow for a side panel (Split View, Slide Over): the tutor covers the canvas.
 private struct TutorOverlayPanel: View {
     @Bindable var model: EditorModel
+    let shown: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
-        if model.showTutor && sizeClass == .compact {
+        if shown && sizeClass == .compact {
             TutorPanel(model: model)
                 .transition(.move(edge: .trailing))
         }

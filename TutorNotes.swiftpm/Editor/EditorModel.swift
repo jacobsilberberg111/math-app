@@ -24,7 +24,11 @@ final class EditorModel: CanvasHost {
         }
     }
 
-    var showTutor = false
+    var showTutor = false {
+        didSet { if showTutor != oldValue { onShowTutorChanged?(showTutor) } }
+    }
+    /// The editor view mirrors showTutor into its own state through this.
+    @ObservationIgnored var onShowTutorChanged: ((Bool) -> Void)?
     var showPages = false
     var showPractice = false
     var showPaper = false
@@ -303,6 +307,8 @@ final class EditorModel: CanvasHost {
     }
 
     func close(library: LibraryStore) {
+        // The view's closure holds the view, which holds this model: break the cycle.
+        onShowTutorChanged = nil
         pauseStudyClock()
         if let before = watchingBeforeExam { tutor.watching = before }
         audio.stopAll()
