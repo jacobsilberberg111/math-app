@@ -120,6 +120,11 @@ enum ElementAction {
     case askTutor, explain, delete, duplicate, edit, revealHint, revealSolution, checkAnswer
 }
 
+/// What the lasso's "To Text" and "To Math" buttons turn the selected handwriting into.
+enum InkConversionKind {
+    case text, math
+}
+
 /// Callbacks from the canvas to the editor.
 @MainActor
 protocol CanvasHost: AnyObject {
@@ -133,6 +138,7 @@ protocol CanvasHost: AnyObject {
     func canvasRequestPalette(anchor: CGRect)
     func canvasUndoStateChanged()
     func canvasSelectionChanged(_ element: CanvasElement?)
+    func canvasConvertLasso(_ kind: InkConversionKind)
     func canvasReplayTapped(at docPoint: CGPoint)
     func canvasShapeSnapped(_ name: String)
     func canvasOffscreenTutorEdit(page: Int, docRect: CGRect)

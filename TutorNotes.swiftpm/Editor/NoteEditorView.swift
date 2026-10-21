@@ -149,6 +149,7 @@ struct NoteEditorView: View {
             .ignoresSafeArea()
         }
         .sheet(item: $exportItem) { item in ShareSheet(items: item.urls) }
+        .sheet(item: $model.inkConversion) { InkConversionSheet(conversion: $0, model: model) }
         .noteFileArrival(switchTo: { meta in if let onSwitchNote { switchTo(meta, onSwitchNote) } }, flash: { model.flash($0) })
         .statusBarHidden(false)
     }
