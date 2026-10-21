@@ -61,7 +61,12 @@ final class TutorVoice {
         let t = text.trimmed
         guard !t.isEmpty else { return }
         if synth.isSpeaking { synth.stopSpeaking(at: .word) }
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
+        let session = AVAudioSession.sharedInstance()
+        // Play-and-record (a lecture recording) can already play speech; switching it to
+        // playback would stop the recording.
+        if session.category != .playAndRecord {
+            try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
+        }
         let u = AVSpeechUtterance(string: String(t.prefix(600)))
         u.rate = AVSpeechUtteranceDefaultSpeechRate * 1.02
         u.voice = AVSpeechSynthesisVoice(language: Locale.preferredLanguages.first ?? "en-US")
@@ -84,10 +89,14 @@ final class SpeechDictation: ObservableObject {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private let recognizer = SFSpeechRecognizer()
+    /// True while a lecture recording owns the audio session: dictate inside it instead of
+    /// reconfiguring or deactivating it (either would stop the recording).
+    private var sharesRecordingSession = false
 
-    func start() {
+    func start(duringRecording: Bool = false) {
         guard !isRecording else { return }
         errorMessage = nil
+        sharesRecordingSession = duringRecording
         SpeechDictation.requestAuthorization { [weak self] authorized in
             guard let self else { return }
             guard authorized else {
@@ -129,15 +138,23 @@ final class SpeechDictation: ObservableObject {
             return
         }
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            if !sharesRecordingSession {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+                try session.setActive(true, options: .notifyOthersOnDeactivation)
+            }
             let req = SFSpeechAudioBufferRecognitionRequest()
             req.shouldReportPartialResults = true
             if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = false }
             request = req
             let input = engine.inputNode
             let format = input.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                // installTap traps on an invalid format (no usable microphone).
+                errorMessage = "No microphone is available."
+                stop()
+                return
+            }
             input.removeTap(onBus: 0)
             SpeechDictation.installTap(on: input, format: format, request: req)
             engine.prepare()
@@ -156,7 +173,8 @@ final class SpeechDictation: ObservableObject {
     }
 
     func stop() {
-        guard isRecording || engine.isRunning else { return }
+        // `request` is set early in beginSession, so this also cleans up a start that failed.
+        guard isRecording || engine.isRunning || request != nil else { return }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         request?.endAudio()
@@ -164,6 +182,8 @@ final class SpeechDictation: ObservableObject {
         request = nil
         task = nil
         isRecording = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if !sharesRecordingSession {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 }

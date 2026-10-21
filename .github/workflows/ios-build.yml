@@ -1,0 +1,114 @@
+name: iOS Build
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xcode-project:
+    name: Build app (Xcode project, simulator + unsigned .ipa)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          ls /Applications | grep -i xcode || true
+          xcodebuild -version
+          xcrun simctl list devices available | grep -i ipad | head -20 || true
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for iPad simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project TutorNotes.xcodeproj -scheme TutorNotes -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee sim-build.log | grep -E "error:|warning: .*(isolat|Sendable)|BUILD" || true
+          grep -q "BUILD SUCCEEDED" sim-build.log
+
+      - name: Compiler errors summary
+        if: failure()
+        run: |
+          echo "==== ERRORS ===="
+          grep -E "^/.*error:" sim-build.log | sort -u | head -150 || true
+          echo "==== CONTEXT ===="
+          grep -B2 -A6 -E "^/.*error:" sim-build.log | head -400 || true
+
+      - name: Build Release for device (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild -project TutorNotes.xcodeproj -scheme TutorNotes -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/device \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build 2>&1 | tee device-build.log | grep -E "error:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" device-build.log
+
+      - name: Package unsigned .ipa
+        run: |
+          APP=$(find build/device/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry TutorNotes-unsigned.ipa Payload
+          ls -la TutorNotes-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TutorNotes-unsigned-ipa
+          path: TutorNotes-unsigned.ipa
+          retention-days: 30
+
+      - name: Launch in simulator and screenshot
+        continue-on-error: true
+        run: |
+          DEVICE=$(xcrun simctl list devices available | grep -E "iPad Pro 13|iPad Pro \(12.9|iPad Air 13|iPad Pro 11|iPad" | head -1 | sed -E 's/^ *(.*) \(([0-9A-F-]{36})\).*/\2/')
+          echo "Device: $DEVICE"
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          APP=$(find build/sim/Build/Products/Debug-iphonesimulator -maxdepth 1 -name "*.app" | head -1)
+          xcrun simctl install "$DEVICE" "$APP"
+          mkdir -p screenshots
+          xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding
+          sleep 8
+          xcrun simctl io "$DEVICE" screenshot screenshots/library.png
+          xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
+          xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding -uitest-open-first-note
+          sleep 10
+          xcrun simctl io "$DEVICE" screenshot screenshots/editor.png
+          xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
+          xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding -uitest-open-first-note -uitest-show-tutor
+          sleep 10
+          xcrun simctl io "$DEVICE" screenshot screenshots/editor-tutor.png
+          ls -la screenshots
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: screenshots
+          retention-days: 14
+
+  playgrounds-package:
+    name: Build Swift Playgrounds package
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build TutorNotes.swiftpm for iPad simulator
+        working-directory: TutorNotes.swiftpm
+        run: |
+          set -o pipefail
+          xcodebuild -version
+          xcodebuild -list || true
+          xcodebuild -scheme "Tutor Notes" -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ../pkg-build.log | grep -E "error:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" ../pkg-build.log
+      - name: Errors summary
+        if: failure()
+        run: grep -E "error:" pkg-build.log | sort -u | head -100 || true

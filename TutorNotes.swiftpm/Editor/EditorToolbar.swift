@@ -228,12 +228,14 @@ struct EditorToolStrip: View {
             if sizeClass == .compact {
                 // Narrow windows: the whole strip scrolls.
                 ScrollView(.horizontal, showsIndicators: false) { strip(contextual) }
+                    .scrollBounceBehavior(.basedOnSize)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 // Tools + colours + widths + toggles are wider than most iPads in portrait, so
                 // the middle section scrolls rather than pushing the strip off both edges.
                 strip(
                     ScrollView(.horizontal, showsIndicators: false) { contextual }
+                        .scrollBounceBehavior(.basedOnSize)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 )

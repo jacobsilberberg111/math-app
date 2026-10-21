@@ -654,8 +654,33 @@ final class TutorEngine {
     }
 
     func attachImage(_ image: UIImage, name: String = "Photo") {
-        guard let data = image.jpegData(compressionQuality: 0.85) else { return }
+        guard let data = TutorEngine.jpegForTutor(image) else { return }
         addAttachment(data: data, name: name + ".jpg", kind: .image, mime: "image/jpeg", ext: "jpg")
+    }
+
+    static let maxImageSide: CGFloat = 2400
+
+    static func longestPixelSide(_ image: UIImage) -> CGFloat {
+        max(image.size.width, image.size.height) * image.scale
+    }
+
+    /// JPEG small enough for the API's per-image limits: full-resolution photos are downscaled
+    /// (the model doesn't use more detail than this anyway).
+    static func jpegForTutor(_ image: UIImage) -> Data? {
+        let longest = longestPixelSide(image)
+        guard longest > maxImageSide else { return image.jpegData(compressionQuality: 0.85) }
+        let scale = maxImageSide / longest
+        let size = CGSize(width: (image.size.width * image.scale * scale).rounded(),
+                          height: (image.size.height * image.scale * scale).rounded())
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let scaled = UIGraphicsImageRenderer(size: size, format: format).image { rc in
+            UIColor.white.setFill()
+            rc.fill(CGRect(origin: .zero, size: size))
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return scaled.jpegData(compressionQuality: 0.85)
     }
 
     private func addAttachment(data: Data, name: String, kind: AttachmentKind, mime: String, ext: String) {
@@ -769,13 +794,15 @@ final class TutorEngine {
 
     private func glance(page: Int, region: CGRect) async {
         isObserving = true
+        let generation = sessionGeneration
         let docRegion = document.docRect(region, page: page)
         canvas?.setTutorActivity(.looking(docRegion))
         let builder = TutorContextBuilder(doc: document, canvas: canvas, memory: memory)
         let recent = recentWriting.filter { Date().timeIntervalSince($0.0) < 120 }.map(\.1)
-        var content = builder.blocks(focus: (page, region), recentWriting: recent, extraNotes: [])
-        content.append(TutorContextBuilder.text(TutorPrompts.observationPrompt(proactivity: settings.proactivity,
-                                                                               region: "page \(page + 1) \(region.roundedForDisplay)")))
+        // The system prompt recognises observation turns by their leading [observation] text.
+        var content: [JSONValue] = [TutorContextBuilder.text(TutorPrompts.observationPrompt(proactivity: settings.proactivity,
+                                                                                            region: "page \(page + 1) \(region.roundedForDisplay)"))]
+        content += builder.blocks(focus: (page, region), recentWriting: recent, extraNotes: [])
         var messages: [JSONValue] = [["role": "user", "content": .array(content)]]
         // Observation runs in its own short exchange so it never interleaves with the chat history.
         let executor = observerExecutor
@@ -787,7 +814,14 @@ final class TutorEngine {
                 try Task.checkCancellation()
                 let r = try await streamOnce(messages: messages, model: settings.observerModelID, effort: .low, itemID: nil,
                                              executor: executor, observation: true)
-                if r.stopReason == "refusal" { break }
+                if r.stopReason == "refusal" {
+                    // As for chat turns, a declined observation leaves nothing behind.
+                    CanvasActionExecutor.revert(executor.record, in: document)
+                    executor.beginTurn()
+                    actions.removeAll()
+                    text = ""
+                    break
+                }
                 actions += r.actions
                 text += r.text
                 if !r.assistantBlocks.isEmpty { messages.append(["role": "assistant", "content": .array(r.assistantBlocks)]) }
@@ -802,7 +836,11 @@ final class TutorEngine {
         }
         executor.endResponse()
         let record = executor.record
-        if !actions.isEmpty {
+        if actions.isEmpty && !record.isEmpty {
+            // Interrupted before any tool call finished: don't leave marks nobody can undo.
+            CanvasActionExecutor.revert(record, in: document)
+        }
+        if !actions.isEmpty, generation == sessionGeneration {
             let cleaned = text.replacingOccurrences(of: "(watching)", with: "").trimmed
             var item = ChatItem(role: .observer, text: cleaned)
             item.actions = actions
@@ -815,8 +853,11 @@ final class TutorEngine {
             scheduleSave()
         }
         isObserving = false
-        statusText = nil
-        canvas?.setTutorActivity(actions.isEmpty ? .hidden : .idle)
+        // A chat turn may have started while this glance was unwinding; leave its status alone.
+        if !isBusy {
+            statusText = nil
+            canvas?.setTutorActivity(actions.isEmpty ? .hidden : .idle)
+        }
     }
 
     // MARK: Stuck detection (local, free)
@@ -825,7 +866,8 @@ final class TutorEngine {
         stuckTimer = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
-                self?.checkStuck()
+                guard let self else { return }
+                self.checkStuck()
             }
         }
     }

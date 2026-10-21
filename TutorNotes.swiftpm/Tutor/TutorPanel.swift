@@ -280,7 +280,7 @@ struct TutorPanel: View {
 
                 if draft.trimmed.isEmpty && !tutor.isBusy {
                     Button {
-                        if dictation.isRecording { dictation.stop(); sendDraft() } else { dictation.start() }
+                        if dictation.isRecording { dictation.stop(); sendDraft() } else { dictation.start(duringRecording: model.audio.isRecording) }
                     } label: {
                         Image(systemName: dictation.isRecording ? "waveform.circle.fill" : "mic.circle")
                             .font(.system(size: 28))
@@ -548,7 +548,8 @@ struct RichTextView: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: RichTextUIView, context: Context) -> CGSize? {
-        let width = proposal.width ?? 300
+        // nil or infinite proposals (ideal size) get a sensible default width.
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 300
         let l = uiView.layout(width: width)
         return CGSize(width: width, height: l.size.height + 2)
     }

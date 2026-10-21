@@ -23,6 +23,7 @@ struct LibraryView: View {
     @State private var editingSubject: Subject?
     @State private var pendingDelete: NoteMeta?
     @State private var showOnboarding = false
+    @State private var importFailed = false
 
     var currentSubjectID: UUID? {
         if case .subject(let id) = selection { return id }
@@ -64,9 +65,15 @@ struct LibraryView: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showOnboarding) { OnboardingView() }
         .fileImporter(isPresented: $showPDFImporter, allowedContentTypes: [.pdf]) { result in
-            if case .success(let url) = result, let meta = library.createNote(fromPDF: url, subjectID: currentSubjectID) {
+            guard case .success(let url) = result else { return }
+            if let meta = library.createNote(fromPDF: url, subjectID: currentSubjectID) {
                 openNote = meta
+            } else {
+                importFailed = true
             }
+        }
+        .alert("Couldn't import that PDF", isPresented: $importFailed) {
+            Button("OK", role: .cancel) {}
         }
         .alert("Rename Note", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $renameText)
