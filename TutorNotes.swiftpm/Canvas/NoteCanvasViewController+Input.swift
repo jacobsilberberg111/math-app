@@ -156,11 +156,21 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         // Catches a touch that only grew palm-sized after it landed (or a palm lifting off as a "tap").
         if fingerOnlyGestures.contains(where: { $0 === gestureRecognizer }), isWritingHandActive { return false }
+        // When fingers draw, a quick ":" or a held stroke mustn't open the Ask menu or select things.
+        if fingersDraw, gestureRecognizer === longPress || isSingleFingerDoubleTap(gestureRecognizer) { return false }
         if gestureRecognizer === longPress {
             let p = gestureRecognizer.location(in: chrome)
             return hitTestElement(at: p) != nil
         }
         return true
+    }
+
+    /// Finger drawing is on and the current tool draws with PencilKit, so a finger is a pen.
+    var fingersDraw: Bool { tool.fingerDrawing && tool.kind.usesPencilKit }
+
+    private func isSingleFingerDoubleTap(_ g: UIGestureRecognizer) -> Bool {
+        guard let tap = g as? UITapGestureRecognizer else { return false }
+        return tap.numberOfTapsRequired == 2 && tap.numberOfTouchesRequired == 1
     }
 
     // MARK: Undo gestures
@@ -254,7 +264,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
             endShapeEditing()
             // A finger tap on the tutor's writing or marks selects it: drag to move it, or use the bar
             // to ask about it, edit it, duplicate or delete it. (Pencil taps keep writing.)
-            if lastTapWasFinger, let e = hitTestElement(at: docPoint), e.isTutor {
+            if lastTapWasFinger, !fingersDraw, let e = hitTestElement(at: docPoint), e.isTutor {
                 select(e.id)
             } else if selectedElementID != nil {
                 select(nil)

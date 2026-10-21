@@ -1,4 +1,5 @@
 import UIKit
+import PencilKit
 
 /// Sees every touch on the canvas without ever recognising or cancelling anything, so the controller
 /// can tell the hand resting on the page apart from a finger that means to scroll or tap.
@@ -51,9 +52,14 @@ final class TouchWatcherGesture: UIGestureRecognizer {
 /// hovering over the glass (or just after it lifts), when it's already down as the pencil lands, or
 /// when its contact is palm-sized. While any such touch is down, scrolling, zooming and finger
 /// gestures are off; a page nudge from a palm that landed just before the pencil is put back.
+///
+/// With finger drawing on, a finger is a pen: a fingertip pressed flat can be as big as a small
+/// palm, so contact size is ignored and only Apple Pencil activity marks fingers as the hand. The
+/// drawing policy is never switched mid-touch (doing so dropped finger strokes).
 extension NoteCanvasViewController {
-    /// Fingertips report a major radius of roughly 8–20 pt; a palm or the side of a hand is larger.
-    static let palmContactRadius: CGFloat = 28
+    /// Fingertips report a major radius of roughly 8–25 pt (more when pressed flat); a resting palm
+    /// or the side of a hand is larger.
+    static let palmContactRadius: CGFloat = 34
     /// How long after the pencil or the hand lifts that new finger touches still count as the hand.
     static let palmGracePeriod: TimeInterval = 0.35
 
@@ -78,7 +84,7 @@ extension NoteCanvasViewController {
     }
 
     func isPalmSized(_ t: UITouch) -> Bool {
-        t.type == .direct && t.majorRadius >= Self.palmContactRadius
+        !tool.fingerDrawing && t.type == .direct && t.majorRadius >= Self.palmContactRadius
     }
 
     /// Whether a finger touch should be ignored by taps, long-presses and region drags.
@@ -138,7 +144,10 @@ extension NoteCanvasViewController {
     }
 
     private func watchedTouchEnded(_ t: UITouch) {
-        if pencilTouches.remove(t) != nil || palmTouches.remove(t) != nil {
+        let wasPencil = pencilTouches.remove(t) != nil
+        let wasPalm = palmTouches.remove(t) != nil
+        // With finger drawing on, the next finger stroke right after this one must still draw.
+        if wasPencil || (wasPalm && !tool.fingerDrawing) {
             palmGuardUntil = Date().addingTimeInterval(Self.palmGracePeriod)
         }
         fingerTouches.remove(t)
@@ -161,7 +170,6 @@ extension NoteCanvasViewController {
             // Turning a recognizer off also cancels a scroll or pinch the hand had started.
             canvasView.panGestureRecognizer.isEnabled = !block
             canvasView.pinchGestureRecognizer?.isEnabled = !block
-            applyDrawingPolicy()
         }
         if block, pencilTouches.isEmpty, palmTouches.isEmpty {
             // Only the grace period is left: look again once it has run out.
@@ -170,9 +178,10 @@ extension NoteCanvasViewController {
         }
     }
 
-    /// Finger drawing (when it's on) pauses while the writing hand is down, so a palm can't draw.
+    /// Only set when it actually changes: reassigning it while a finger is drawing cancels the stroke.
     func applyDrawingPolicy() {
-        canvasView.drawingPolicy = tool.fingerDrawing && !scrollingBlockedForPalm ? .anyInput : .pencilOnly
+        let policy: PKCanvasViewDrawingPolicy = tool.fingerDrawing ? .anyInput : .pencilOnly
+        if canvasView.drawingPolicy != policy { canvasView.drawingPolicy = policy }
     }
 
     /// If the page moved under a palm that landed just before the pencil, put it back.
