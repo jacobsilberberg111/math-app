@@ -235,12 +235,14 @@ final class TutorEngine {
         change(&chat[i])
     }
 
-    private func runTurn(userContent: [JSONValue]?, replyID: UUID, focusDoc: CGRect?) async {
+    private func runTurn(userContent: [JSONValue]?, replyID: UUID, focusDoc: CGRect?,
+                         attachmentIDs: [String] = [], notes: [String] = []) async {
         isBusy = true
         lastErrorRetryable = false
         statusText = "Looking at your page…"
         canvas?.setTutorActivity(focusDoc.map { .looking($0) } ?? .thinking(nil))
         executor.beginTurn()
+        let generation = sessionGeneration
         let startCount = apiMessages.count
         if let userContent {
             apiMessages.append(["role": "user", "content": .array(userContent)])
@@ -258,10 +260,12 @@ final class TutorEngine {
                     apiMessages.append(["role": "assistant", "content": .array(result.assistantBlocks)])
                     producedOutput = true
                 }
-                if result.stopReason == "tool_use" || (result.stopReason == "max_tokens" && !result.toolResults.isEmpty) {
-                    if !result.toolResults.isEmpty {
-                        apiMessages.append(["role": "user", "content": .array(result.toolResults)])
-                        scheduleSave()
+                if !result.toolResults.isEmpty {
+                    // Every echoed tool_use needs its tool_result next, whatever the stop reason
+                    // (e.g. model_context_window_exceeded), or the history can't be sent again.
+                    apiMessages.append(["role": "user", "content": .array(result.toolResults)])
+                    scheduleSave()
+                    if result.stopReason == "tool_use" || result.stopReason == "max_tokens" {
                         statusText = "Working on the page…"
                         continue
                     }
@@ -271,7 +275,10 @@ final class TutorEngine {
             finishTurn(replyID)
         } catch TurnError.refused {
             CanvasActionExecutor.revert(executor.record, in: document)
-            apiMessages.removeSubrange(startCount..<apiMessages.count)
+            if generation == sessionGeneration {
+                dropHistory(from: startCount)
+                if userContent != nil { restoreUnsent(attachmentIDs: attachmentIDs, notes: notes) }
+            }
             updateItem(replyID) {
                 $0.isStreaming = false
                 $0.text = ""
@@ -287,15 +294,21 @@ final class TutorEngine {
             }
             if !record.isEmpty {
                 turnRecords[replyID] = record
-                pendingNotes.append("The student stopped your previous turn part-way; some of your writing may already be on the page.")
+                if generation == sessionGeneration {
+                    pendingNotes.append("The student stopped your previous turn part-way; some of your writing may already be on the page.")
+                }
             }
         } catch {
             let message = (error as? AnthropicError)?.errorDescription ?? error.localizedDescription
-            if !producedOutput && executor.record.isEmpty {
-                // Nothing happened: drop the turn so a retry starts clean.
-                if userContent != nil { apiMessages.removeSubrange(startCount..<apiMessages.count) }
+            let retryable = (error as? AnthropicError)?.isRetryable ?? true
+            // A retryable failure keeps the turn (the history ends with a user message) so
+            // "Try Again" can continue it. One that will fail the same way again is dropped when
+            // nothing came of it, so the next message isn't stuck behind it.
+            if generation == sessionGeneration, !retryable, !producedOutput, userContent != nil {
+                dropHistory(from: startCount)
+                restoreUnsent(attachmentIDs: attachmentIDs, notes: notes)
             }
-            lastErrorRetryable = (error as? AnthropicError)?.isRetryable ?? true
+            lastErrorRetryable = retryable && apiMessages.last?["role"]?.stringValue == "user"
             let record = executor.record
             updateItem(replyID) {
                 $0.isStreaming = false
@@ -308,6 +321,18 @@ final class TutorEngine {
         statusText = nil
         canvas?.setTutorActivity(.idle)
         scheduleSave()
+    }
+
+    /// Discards a failed or declined turn from the end of the history (never earlier turns).
+    private func dropHistory(from count: Int) {
+        guard count < apiMessages.count else { return }
+        apiMessages.removeSubrange(count...)
+    }
+
+    /// A dropped user turn never reached the tutor: send its attachments and notes next time.
+    private func restoreUnsent(attachmentIDs: [String], notes: [String]) {
+        session.sentAttachmentIDs.removeAll { attachmentIDs.contains($0) }
+        pendingNotes.insert(contentsOf: notes, at: 0)
     }
 
     private func finishTurn(_ replyID: UUID) {
@@ -385,8 +410,12 @@ final class TutorEngine {
         var toolResults: [JSONValue] = []
         var actions: [ChatAction] = []
         var toolCalls = 0
+        var sawMessageStop = false
+        // Chips from earlier responses in this turn stay; only this response's can be taken back.
+        let baseActionCount = itemID.flatMap { id in chat.first { $0.id == id }?.actions.count } ?? 0
         executor.beginResponse()
 
+        do {
         for try await event in stream {
             try Task.checkCancellation()
             received = true
@@ -403,13 +432,18 @@ final class TutorEngine {
                     statusText = TutorEngine.status(forTool: b.toolName)
                 }
                 if type == "text", let t = block["text"]?.stringValue { b.text = t }
+                if type == "thinking" {
+                    // Echoed verbatim later: start from whatever the block opened with.
+                    b.text = block["thinking"]?.stringValue ?? ""
+                    b.signature = block["signature"]?.stringValue ?? ""
+                }
                 if type == "fallback" {
                     // A fallback model took over mid-response: undo canvas edits made by the declined
                     // attempt and drop its tool results (its tool_use blocks are not echoed back).
                     executor.revertResponse()
                     toolResults.removeAll()
                     actions.removeAll()
-                    if let itemID { updateItem(itemID) { $0.actions = [] } }
+                    if let itemID { updateItem(itemID) { $0.actions = Array($0.actions.prefix(baseActionCount)) } }
                 }
                 blocks[i] = b
                 order.append(i)
