@@ -251,7 +251,15 @@ extension DemoDirector {
         let find = model.find
         find.open()
         find.query = "photo"
-        await wait(0.5)
+        for _ in 0..<12 {
+            await wait(0.25)
+            if !find.matches.isEmpty { break }
+        }
+        let texts = model.document.content.elements.compactMap { e -> String? in
+            if case .text(let t) = e.kind { return t.text }
+            return nil
+        }
+        FeatureCheck.info("typed elements \(texts); find open \(find.isOpen), query '\(find.query)', reading \(find.isReading)")
         FeatureCheck.check("find typed text", find.matches.count == 1 && find.currentIndex == 0, "\(find.matches.count) matches")
         find.query = "2025"
         for _ in 0..<60 {
