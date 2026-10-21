@@ -85,7 +85,9 @@ final class SpeechDictation: ObservableObject {
     @Published var isRecording = false
     @Published var errorMessage: String?
 
-    private let engine = AVAudioEngine()
+    // Created on first use: the engine opens the audio hardware, which isn't free and isn't
+    // needed until someone actually dictates.
+    private var engine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private let recognizer = SFSpeechRecognizer()
@@ -147,6 +149,8 @@ final class SpeechDictation: ObservableObject {
             req.shouldReportPartialResults = true
             if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = false }
             request = req
+            let engine = self.engine ?? AVAudioEngine()
+            self.engine = engine
             let input = engine.inputNode
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -174,9 +178,9 @@ final class SpeechDictation: ObservableObject {
 
     func stop() {
         // `request` is set early in beginSession, so this also cleans up a start that failed.
-        guard isRecording || engine.isRunning || request != nil else { return }
-        engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
+        guard isRecording || engine?.isRunning == true || request != nil else { return }
+        engine?.stop()
+        engine?.inputNode.removeTap(onBus: 0)
         request?.endAudio()
         task?.finish()
         request = nil

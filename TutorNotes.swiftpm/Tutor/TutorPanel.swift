@@ -52,6 +52,13 @@ struct TutorPanel: View {
         .onChange(of: model.pendingFocus != nil) { _, has in
             if has { composerFocused = true }
         }
+        .onChange(of: model.showTutor) { _, shown in
+            // The side panel stays mounted when closed: don't leave the keyboard or the mic up for it.
+            if !shown {
+                composerFocused = false
+                dictation.stop()
+            }
+        }
         .sheet(isPresented: $showSettings) { SettingsView() }
     }
 

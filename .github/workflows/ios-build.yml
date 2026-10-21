@@ -87,7 +87,7 @@ jobs:
           xcrun simctl io "$DEVICE" screenshot screenshots/2-editor.png
           xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
           xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding -uitest-open-first-note -uitest-show-tutor
-          sleep 7
+          sleep 9
           xcrun simctl io "$DEVICE" screenshot screenshots/3-editor-tutor.png
           xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
 
@@ -112,6 +112,7 @@ jobs:
           wait $REC || true
           xcrun simctl io "$DEVICE" screenshot video/final-frame.png || true
           ls -la video
+          grep "DEMO:" video/app-log.txt || true
           tail -40 video/app-log.txt || true
 
       - uses: actions/upload-artifact@v4

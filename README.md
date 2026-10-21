@@ -2,7 +2,7 @@
 
 An iPad note-taking app for Apple Pencil, with a built-in Claude tutor that works **on the page** with you. It writes in its own handwriting, typesets math, draws graphs and diagrams, circles your mistakes, adds practice questions, and marks your answers live.
 
-> **Status: v1, unverified build.** The app was written in a Linux environment with no iOS SDK. All the platform-independent logic is unit-tested (see `CoreTests/`), and the UIKit, PencilKit and SwiftUI code was reviewed against the iOS 17 SDK, but it has **not** been compiled in Xcode yet. Expect a few small fixes on the first build. Send the compiler errors back and they can be fixed quickly.
+> **Status: v1.** It builds cleanly in CI with Xcode 26.6, for the iPad simulator and as a Release device build. The platform-independent logic is unit-tested (see `CoreTests/`), and a scripted walkthrough runs the real canvas and tutor pipeline in the simulator to record the demo video. It hasn't been tested on a physical iPad with an Apple Pencil yet, so Pencil-specific behaviour (pressure, hover, squeeze, palm rejection) is unverified on hardware.
 
 ## Running it
 
@@ -15,6 +15,10 @@ You need an iPad on iPadOS 17 or later, an Apple Pencil, and an [Anthropic API k
 **Option B: Xcode on a Mac**
 1. Open `TutorNotes.swiftpm` in Xcode 16 or later.
 2. Select your iPad as the run destination, choose your team under Signing (Playgrounds-style packages show it in the app settings), and run.
+
+**Option C: sideload the CI build**
+1. In GitHub, open **Actions → iOS Build**, run it (or open the latest run), and download the `TutorNotes-unsigned-ipa` artifact.
+2. Unzip it and sideload `TutorNotes-unsigned.ipa` with Sideloadly or AltStore. They sign it with your Apple ID. With a free Apple ID the app stops opening after 7 days and needs re-signing; a paid developer account lasts a year.
 
 On first launch, connect the tutor: either your **tutor server** (recommended, see below) or your own API key.
 
@@ -106,9 +110,11 @@ project.yml                  XcodeGen spec for a regular Xcode project (used by 
 
 Run the core tests on a Mac or Linux machine with Swift installed: `./CoreTests/run.sh`.
 
+The demo video is recorded by launching the app with `-demo-script`. Student handwriting in it is synthesised and the tutor's turns are scripted tool calls (no network), played through the real executor, streaming previews and chat panel.
+
 ## Known gaps
 
-- Not compiled in Xcode yet (see the status note above).
+- Not tested on a physical iPad yet (see the status note above).
 - Lasso selects ink only. Typed and tutor elements are selected with the Select tool or a long-press.
 - The page map sent to the tutor gets long for pages with many strokes. Very dense pages may need tuning.
 - iCloud sync and collaboration aren't implemented. Notes are stored locally in the app's Documents folder.

@@ -90,6 +90,13 @@ enum Handwriting {
 
     /// A PencilKit stroke along the points, with gentle pressure variation like a real pen.
     static func pkStroke(_ points: [CGPoint], color: UIColor, width: CGFloat, ink: PKInk.InkType = .pen) -> PKStroke {
+        // PencilKit fits a spline through the control points, so a short stroke given as two or
+        // three points (a minus sign, half an x) renders as almost nothing. Resample it evenly and
+        // repeat the ends so the spline reaches them, like the points a real Pencil reports.
+        var points = ShapeGeometry.densify(points, spacing: 2, cornerRepeat: 1)
+        if let first = points.first, let last = points.last {
+            points = [first, first] + points + [last, last]
+        }
         var pts: [PKStrokePoint] = []
         let n = max(1, points.count - 1)
         for (i, p) in points.enumerated() {

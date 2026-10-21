@@ -37,12 +37,9 @@ final class DemoDirector {
             settings.serverURL = "demo.invalid"
             settings.serverToken = "demo"
             Task { await run() }
-        } else if DemoDirector.openFirstNote, !started, let first = welcomeNote() {
+        } else if DemoDirector.openFirstNote, !started {
             started = true
-            Task {
-                try? await Task.sleep(nanoseconds: 600_000_000)
-                open(first)
-            }
+            Task { await openWelcomeNote() }
         }
     }
 
@@ -59,6 +56,24 @@ final class DemoDirector {
     private func welcomeNote() -> NoteMeta? {
         guard let library else { return nil }
         return library.notes.first { $0.title.hasPrefix("Welcome") } ?? library.notes.first
+    }
+
+    /// Opens the welcome note, trying again if the presentation doesn't take: one requested while
+    /// the library is still settling after launch can be dropped.
+    private func openWelcomeNote() async {
+        for attempt in 0..<4 {
+            await wait(attempt == 0 ? 0.8 : 2.0)
+            if editor != nil { return }
+            if let note = welcomeNote() {
+                log("opening \(note.title) (attempt \(attempt + 1))")
+                openNote?(note)
+            }
+        }
+    }
+
+    /// Lines the CI recording step keeps in its log, to explain a video that looks wrong.
+    private func log(_ message: String) {
+        print("DEMO: \(message)")
     }
 
     // MARK: Helpers
@@ -85,11 +100,6 @@ final class DemoDirector {
             guard let canvas, canvas.isRevealing else { return }
             await wait(0.1)
         }
-    }
-
-    private func forceLandscape() {
-        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { _ in }
     }
 
     /// Writes text as animated pen strokes, stroke by stroke.
@@ -177,13 +187,11 @@ final class DemoDirector {
     // MARK: The script
 
     private func run() async {
-        await wait(1.0)
-        forceLandscape()
-        await wait(2.5)
-        guard let note = welcomeNote() else { return }
-        openNote?(note)
+        await wait(2.7)
+        await openWelcomeNote()
         let model = await waitForEditor()
-        guard let canvas = await waitForCanvas(model) else { return }
+        guard let canvas = await waitForCanvas(model) else { log("no canvas"); return }
+        log("editor open, canvas width \(Int(canvas.view.bounds.width))")
         let doc = model.document
         await wait(2.5)
 
@@ -267,6 +275,7 @@ final class DemoDirector {
         model.tools.kind = .pen
         withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) { model.showTutor = true }
         await wait(1.2)
+        log("tutor panel shown, canvas width \(Int(canvas.view.bounds.width))")
 
         // 5. A full tutor turn: graph, typeset working, explanation, a new practice question.
         let reply = beginTutorTurn(model, studentText: "Can you graph it and show me where the roots are?",

@@ -378,8 +378,9 @@ enum ElementRenderer {
         // A stored step that is non-positive or would draw hundreds of lines (and hang the tick
         // loops below) falls back to an automatic one.
         func usable(_ step: Double?, _ range: Double) -> Double? { step.flatMap { $0 > 0 && range / $0 <= 200 ? $0 : nil } }
-        let xStep = usable(g.xStep, g.xMax - g.xMin) ?? niceStep(g.xMax - g.xMin)
-        let yStep = usable(g.yStep, g.yMax - g.yMin) ?? niceStep(g.yMax - g.yMin, targetTicks: 10 * Double(plot.height / max(plot.width, 1)))
+        // Automatic steps aim for a labelled tick every ~55 pt, so small graphs don't crowd their axes.
+        let xStep = usable(g.xStep, g.xMax - g.xMin) ?? niceStep(g.xMax - g.xMin, targetTicks: min(10, max(4, Double(plot.width) / 55)))
+        let yStep = usable(g.yStep, g.yMax - g.yMin) ?? niceStep(g.yMax - g.yMin, targetTicks: min(10, max(4, Double(plot.height) / 45)))
 
         // Grid.
         if g.showGrid {

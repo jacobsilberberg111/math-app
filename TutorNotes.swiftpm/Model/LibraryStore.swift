@@ -57,6 +57,8 @@ final class LibraryStore {
         WelcomeContent.populate(doc)
         doc.saveNow()
         notes.append(doc.meta)
+        // Thumbnails are normally made when a note closes; this one has never been opened.
+        setThumbnail(PageRenderer.thumbnail(doc), for: doc.id)
     }
 
     func saveSubjects() {
