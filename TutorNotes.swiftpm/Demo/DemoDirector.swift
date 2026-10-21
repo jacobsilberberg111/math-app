@@ -435,7 +435,7 @@ final class DemoDirector {
         await streamChat("4 out of 8. Your results are on the last page.", into: endReply, model: paper)
         endTutorTurn(paper, replyID: endReply)
         await wait(4.5)
-        if let library { paper.close(library: library) }
+        paper.close(library: library)
         closeNote?()
         await wait(4.0)
     }
