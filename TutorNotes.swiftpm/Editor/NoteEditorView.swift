@@ -111,7 +111,6 @@ struct NoteEditorView: View {
 
     private var canvasArea: some View {
         GeometryReader { geo in
-            let _ = DemoDirector.trace("canvas area width \(Int(geo.size.width))")
             ZStack(alignment: .top) {
                 CanvasRepresentable(model: model, config: model.tools.config(settings: settings))
                     .ignoresSafeArea(.container, edges: .bottom)
@@ -173,10 +172,6 @@ struct NoteEditorView: View {
     }
 }
 
-// The tutor panel reads `showTutor` in views of its own. Read directly in NoteEditorView's body,
-// the change didn't re-render the editor until something else did (the toolbar button lit up, but
-// the panel stayed closed).
-
 /// The tutor beside the canvas in regular width. It stays mounted while hidden, so a half-typed
 /// question and the chat's scroll position survive closing it, and it slides in by widening.
 private struct TutorSidePanel: View {
@@ -185,7 +180,6 @@ private struct TutorSidePanel: View {
     private static let width: CGFloat = 392
 
     var body: some View {
-        let _ = DemoDirector.trace("side panel body: showTutor \(model.showTutor), sizeClass \(String(describing: sizeClass))")
         if sizeClass != .compact {
             HStack(spacing: 0) {
                 Divider()
@@ -193,9 +187,6 @@ private struct TutorSidePanel: View {
                     .frame(width: Self.width)
             }
             .frame(width: model.showTutor ? Self.width + 1 : 0, alignment: .leading)
-            .background(GeometryReader { g in
-                Color.clear.onChange(of: g.size.width) { _, w in DemoDirector.trace("side panel width \(Int(w))") }
-            })
             .clipped()
             .allowsHitTesting(model.showTutor)
             .accessibilityHidden(!model.showTutor)

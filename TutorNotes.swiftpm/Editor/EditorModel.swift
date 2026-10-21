@@ -103,8 +103,10 @@ final class EditorModel: CanvasHost {
 
     // MARK: CanvasHost
 
+    // The canvas reports these often (every stroke, every scroll); writing an unchanged value
+    // would still invalidate every view that reads it.
     func canvasVisiblePageChanged(_ page: Int) {
-        currentPage = page
+        if currentPage != page { currentPage = page }
         if case .offscreen(let p) = tutor.suggestion, p == page { tutor.dismissSuggestion() }
     }
 
@@ -165,12 +167,13 @@ final class EditorModel: CanvasHost {
     }
 
     func canvasUndoStateChanged() {
-        canUndo = document.undoManager.canUndo
-        canRedo = document.undoManager.canRedo
+        let undo = document.undoManager.canUndo, redo = document.undoManager.canRedo
+        if canUndo != undo { canUndo = undo }
+        if canRedo != redo { canRedo = redo }
     }
 
     func canvasSelectionChanged(_ element: CanvasElement?) {
-        selectedElement = element
+        if selectedElement != element { selectedElement = element }
     }
 
     func canvasReplayTapped(at docPoint: CGPoint) {
