@@ -153,6 +153,14 @@ jobs:
         if: failure()
         run: grep -E "error:" pkg-build.log | sort -u | head -100 || true
 
+  core-tests:
+    name: Core unit tests
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash CoreTests/run.sh
+
   server:
     name: Railway server tests
     runs-on: ubuntu-latest

@@ -72,28 +72,32 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         undoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         undoTap.delegate = self
         canvasView.addGestureRecognizer(undoTap)
+        fingerOnlyGestures.append(undoTap)
 
         let redoTap = UITapGestureRecognizer(target: self, action: #selector(handleRedoTap))
         redoTap.numberOfTouchesRequired = 3
         redoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         redoTap.delegate = self
         canvasView.addGestureRecognizer(redoTap)
+        fingerOnlyGestures.append(redoTap)
 
         tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tapGesture.delegate = self
         canvasView.addGestureRecognizer(tapGesture)
 
-        let doubleFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTapZoom(_:)))
+        let doubleFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
         doubleFingerTap.numberOfTapsRequired = 2
         doubleFingerTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         doubleFingerTap.delegate = self
         canvasView.addGestureRecognizer(doubleFingerTap)
+        fingerOnlyGestures.append(doubleFingerTap)
 
         longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPress.minimumPressDuration = 0.45
         longPress.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         longPress.delegate = self
         canvasView.addGestureRecognizer(longPress)
+        fingerOnlyGestures.append(longPress)
 
         regionPan = UIPanGestureRecognizer(target: self, action: #selector(handleRegionPan(_:)))
         regionPan.maximumNumberOfTouches = 1
@@ -128,6 +132,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         if gestureRecognizer === strokeObserver || other === strokeObserver { return true }
+        if gestureRecognizer === touchWatcher || other === touchWatcher { return true }
         if gestureRecognizer === tapGesture && other === canvasView.drawingGestureRecognizer { return true }
         return false
     }
@@ -135,13 +140,20 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
     /// Touches on the text box being edited (caret taps, selection long-presses) and on the selection's
     /// action buttons belong to those views; otherwise the canvas tap would end editing or deselect.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        guard gestureRecognizer !== strokeObserver, let v = touch.view else { return true }
+        if gestureRecognizer === strokeObserver || gestureRecognizer === touchWatcher { return true }
+        // The hand resting on the page never taps, long-presses or drags out a region.
+        if isPalmTouch(touch) { return false }
+        if gestureRecognizer === tapGesture { lastTapWasFinger = touch.type == .direct }
+        guard let v = touch.view else { return true }
         if let tv = editingTextView, v.isDescendant(of: tv) { return false }
         if v.isDescendant(of: selectionView.actionBar) { return false }
+        if v.isDescendant(of: shapeBar) { return false }
         return true
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Catches a touch that only grew palm-sized after it landed (or a palm lifting off as a "tap").
+        if fingerOnlyGestures.contains(where: { $0 === gestureRecognizer }), isWritingHandActive { return false }
         if gestureRecognizer === longPress {
             let p = gestureRecognizer.location(in: chrome)
             return hitTestElement(at: p) != nil
@@ -163,11 +175,10 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         showToast(symbol: "arrow.uturn.forward")
     }
 
-    @objc func handleDoubleTapZoom(_ g: UITapGestureRecognizer) {
-        guard tool.kind != .text else { return }
-        if abs(zoom - fitZoom) > 0.02 {
-            zoomToFit()
-        }
+    /// A finger double-tap on the page opens the tutor's Ask menu right there.
+    @objc func handleDoubleTap(_ g: UITapGestureRecognizer) {
+        guard tool.kind != .text, replayTime == nil else { return }
+        requestTutorMenu(at: g.location(in: chrome))
     }
 
     /// Small centred glyph flash, like Notability's undo feedback.
@@ -235,7 +246,14 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
             showRegion(document.docRect(region, page: page))
             host?.canvasRegionSelected(page: page, rect: region, anchor: viewRect(fromDoc: document.docRect(region, page: page)))
         default:
-            if selectedElementID != nil { select(nil) }
+            endShapeEditing()
+            // A finger tap on the tutor's writing or marks selects it: drag to move it, or use the bar
+            // to ask about it, edit it, duplicate or delete it. (Pencil taps keep writing.)
+            if lastTapWasFinger, let e = hitTestElement(at: docPoint), e.isTutor {
+                select(e.id)
+            } else if selectedElementID != nil {
+                select(nil)
+            }
         }
     }
 
@@ -580,16 +598,9 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         let sizes = last.path.map { $0.size.width }
         let width = sizes.isEmpty ? tool.inkWidth : sizes.sorted()[sizes.count / 2]
         let opacity = last.path.first?.opacity ?? 1
-        let pts = shape.outline(spacing: 2.5)
-        var strokePoints: [PKStrokePoint] = []
-        strokePoints.reserveCapacity(pts.count)
-        for (i, p) in pts.enumerated() {
-            strokePoints.append(PKStrokePoint(location: p, timeOffset: TimeInterval(i) * 0.004,
-                                              size: CGSize(width: width, height: width), opacity: opacity,
-                                              force: 1, azimuth: 0, altitude: .pi / 2))
-        }
-        let path = PKStrokePath(controlPoints: strokePoints, creationDate: last.path.creationDate)
-        d.strokes[d.strokes.count - 1] = PKStroke(ink: last.ink, path: path, transform: .identity, mask: nil)
+        let edit = EditableShape(shape: shape, strokeIndex: d.strokes.count - 1, ink: last.ink, width: width,
+                                 opacity: opacity, creationDate: last.path.creationDate)
+        d.strokes[edit.strokeIndex] = edit.makeStroke()
         isApplyingDrawing = true
         canvasView.drawing = d
         isApplyingDrawing = false
@@ -597,6 +608,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         shapePreview.clear()
         host?.canvasShapeSnapped(shape.name)
         snap = SnapState()
+        beginShapeEditing(edit)
     }
 
     // MARK: Hover
@@ -606,6 +618,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         var isPencilHover = false
         if #available(iOS 16.1, *) { isPencilHover = g.zOffset > 0 }
         if isPencilHover { lastHoverDocPoint = p }
+        setPencilHovering(isPencilHover && (g.state == .began || g.state == .changed))
         guard tool.hoverPreview, isPencilHover, replayTime == nil,
               tool.kind == .pen || tool.kind == .highlighter || tool.kind == .eraser else {
             hoverPreview.hide()

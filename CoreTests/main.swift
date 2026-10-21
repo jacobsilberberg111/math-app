@@ -128,6 +128,13 @@ if case .matrix(let rows, let l, let r) = m8 { check(rows.count == 2 && l == "{"
 let segsRT = RichTextParser.segments("Solve $x^2 = 4$ **now**\nthen $$y$$ costs \\$5")
 check(segsRT == [.text("Solve ", bold: false), .math("x^2 = 4"), .text(" ", bold: false), .text("now", bold: true), .newline, .text("then ", bold: false), .math("y"), .text(" costs $5", bold: false)], "rich segments \(segsRT)")
 
+// Literal "\n" from the model becomes a real line break outside math, but LaTeX inside math is untouched.
+check(RichTextParser.normalizingLineBreaks("Step 1\\nStep 2") == "Step 1\nStep 2", "literal \\n")
+check(RichTextParser.normalizingLineBreaks("a\\\\ b\\newline c") == "a\nb\nc", "\\\\ and \\newline")
+check(RichTextParser.normalizingLineBreaks("so $x \\neq 2$ and $$a \\\\ b$$\\nNext") == "so $x \\neq 2$ and $$a \\\\ b$$\nNext", "math untouched")
+check(RichTextParser.normalizingLineBreaks("costs \\$5\\r\\nok") == "costs \\$5\nok", "escaped dollar, CRLF")
+check(RichTextParser.segments("One\\nTwo") == [.text("One", bold: false), .newline, .text("Two", bold: false)], "segments with literal \\n")
+
 // MARK: Shapes
 func circlePts(_ cx: Double, _ cy: Double, _ r: Double, jitter: Double = 1.5, n: Int = 80) -> [CGPoint] {
     (0...n).map { i in
@@ -238,6 +245,39 @@ do {
     check(approx(StudyStreak.seconds(in: log, lastDays: 7, today: today, calendar: cal), 5400), "week seconds")
     check(StudyStreak.duration(5400) == "1h 30m" && StudyStreak.duration(120) == "2m" && StudyStreak.duration(7200) == "2h", "durations")
 }
+
+// Shape bar resizing scales about the centre.
+let triShape = RecognizedShape.polygon([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 0, y: 100)])
+let triBounds = triShape.scaled(by: 2).bounds
+check(abs(triBounds.width - 200) < 1 && abs(triBounds.midX - 50) < 1 && abs(triBounds.midY - 50) < 1, "scaled triangle \(triBounds)")
+if case .ellipse(_, let rx, let ry, _) = RecognizedShape.ellipse(center: CGPoint(x: 10, y: 10), rx: 20, ry: 10, rotation: 0).scaled(by: 0.5) {
+    check(abs(rx - 10) < 0.01 && abs(ry - 5) < 0.01, "scaled ellipse")
+}
+
+// Geometry labels: θ goes inside its angle, side labels outside their side, in either winding order.
+for tri in [[CGPoint(x: 100, y: 100), CGPoint(x: 400, y: 100), CGPoint(x: 100, y: 300)],
+            [CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 300), CGPoint(x: 400, y: 100)]] {
+    let poly = tri
+    let label = CGSize(width: 18, height: 22)
+    let right = poly.firstIndex(of: CGPoint(x: 100, y: 100))!
+    check(GeometryLayout.isRightAngle(poly, right), "right angle detected")
+    for i in poly.indices {
+        let c = GeometryLayout.angleLabelCenter(poly, i, labelSize: label, arcRadius: GeometryLayout.arcRadius(poly, i))
+        check(GeometryLayout.isInside(c, poly), "angle label \(i) inside \(c)")
+        let v = GeometryLayout.vertexLabelCenter(poly, i, labelSize: label)
+        check(!GeometryLayout.isInside(v, poly), "vertex label \(i) outside \(v)")
+        let s = GeometryLayout.sideLabelCenter(poly, side: i, labelSize: label)
+        check(!GeometryLayout.isInside(s, poly), "side label \(i) outside \(s)")
+        let arc = GeometryLayout.angleArc(poly, i, radius: 15)
+        let mid = arc[arc.count / 2]
+        check(GeometryLayout.isInside(mid, poly), "arc \(i) sweeps inside")
+    }
+}
+// A reflex corner: the label still goes inside the shape.
+let arrowhead = [CGPoint(x: 0, y: 0), CGPoint(x: 200, y: 100), CGPoint(x: 0, y: 200), CGPoint(x: 60, y: 100)]
+let reflex = GeometryLayout.interiorBisector(arrowhead, 3)
+check(reflex.angle > .pi, "reflex angle \(reflex.angle)")
+check(GeometryLayout.isInside(GeometryLayout.angleLabelCenter(arrowhead, 3, labelSize: CGSize(width: 16, height: 20), arcRadius: 10), arrowhead), "reflex label inside")
 
 print("passes: \(passes), failures: \(failures)")
 exit(failures == 0 ? 0 : 1)

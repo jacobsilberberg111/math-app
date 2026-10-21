@@ -4,3 +4,4 @@ xcuserdata/
 .build/
 .swiftpm/xcode/
 DerivedData/
+dist/

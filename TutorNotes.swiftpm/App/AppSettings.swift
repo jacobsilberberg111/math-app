@@ -170,7 +170,8 @@ final class AppSettings: ObservableObject {
         connection = TutorConnection(rawValue: d.string(forKey: "connection") ?? "") ?? (storedKey.isEmpty ? .server : .apiKey)
         tutorModel = d.string(forKey: "tutorModel") ?? ClaudeModelOption.sonnet.id
         effort = TutorEffort(rawValue: d.string(forKey: "effort") ?? "") ?? .medium
-        proactive = d.object(forKey: "proactive") as? Bool ?? true
+        // Off by default: the tutor only looks at the page when asked. "Watch while I work" turns it on.
+        proactive = d.object(forKey: "proactive") as? Bool ?? false
         proactivity = Proactivity(rawValue: d.string(forKey: "proactivity") ?? "") ?? .balanced
         observerModel = ObserverModelChoice(rawValue: d.string(forKey: "observerModel") ?? "") ?? .sameAsTutor
         pauseDelay = d.object(forKey: "pauseDelay") as? Double ?? 3.5
@@ -183,7 +184,7 @@ final class AppSettings: ObservableObject {
         shapeRecognition = d.object(forKey: "shapeRecognition") as? Bool ?? true
         hoverPreview = d.object(forKey: "hoverPreview") as? Bool ?? true
         gestureUndo = d.object(forKey: "gestureUndo") as? Bool ?? true
-        doubleTapAction = PencilTapAction(rawValue: d.string(forKey: "doubleTapAction") ?? "") ?? .system
+        doubleTapAction = PencilTapAction(rawValue: d.string(forKey: "doubleTapAction") ?? "") ?? .askTutor
         squeezeAction = PencilSqueezeAction(rawValue: d.string(forKey: "squeezeAction") ?? "") ?? .tutorMenu
         defaultPattern = PaperPattern(rawValue: d.string(forKey: "defaultPattern") ?? "") ?? .ruled
         defaultPaperColor = PaperColor(rawValue: d.string(forKey: "defaultPaperColor") ?? "") ?? .white

@@ -480,11 +480,61 @@ enum RichTextSegment: Equatable {
 }
 
 enum RichTextParser {
+    /// Models sometimes write a line break as the two characters `\n` (or as LaTeX's `\\` or
+    /// `\newline`) instead of a real newline. Outside `$…$` math, turn those into real line breaks.
+    static func normalizingLineBreaks(_ input: String) -> String {
+        guard input.contains("\\") else { return input }
+        let chars = Array(input)
+        var out = ""
+        out.reserveCapacity(chars.count)
+        var inMath = false
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "\\", i + 1 < chars.count {
+                let next = chars[i + 1]
+                if next == "$" {
+                    // An escaped dollar sign stays as it is.
+                    out.append(c)
+                    out.append(next)
+                    i += 2
+                    continue
+                }
+                if !inMath && next == "r", i + 3 < chars.count, chars[i + 2] == "\\", chars[i + 3] == "n" {
+                    i += 2
+                    continue
+                }
+                if !inMath && (next == "n" || next == "\\") {
+                    let isNewlineCommand = next == "n" && String(chars[(i + 1)...].prefix(7)) == "newline"
+                    out.append("\n")
+                    i += isNewlineCommand ? 8 : 2
+                    // Drop the space that usually follows, so the next line doesn't start indented.
+                    while i < chars.count, chars[i] == " " { i += 1 }
+                    continue
+                }
+            }
+            if c == "$" {
+                inMath.toggle()
+                out.append(c)
+                i += 1
+                // "$$" opens or closes display math as a single delimiter.
+                if i < chars.count, chars[i] == "$" {
+                    out.append("$")
+                    i += 1
+                }
+                continue
+            }
+            out.append(c)
+            i += 1
+        }
+        return out
+    }
+
     static func segments(_ input: String) -> [RichTextSegment] {
         var result: [RichTextSegment] = []
         var buffer = ""
         var bold = false
-        let chars = Array(input)
+        let chars = Array(normalizingLineBreaks(input))
         var i = 0
         func flush() {
             if !buffer.isEmpty {

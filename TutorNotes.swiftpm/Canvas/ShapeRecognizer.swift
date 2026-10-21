@@ -38,6 +38,21 @@ enum RecognizedShape: Equatable {
         }
     }
 
+    /// Bounding box of the outline.
+    var bounds: CGRect { ShapeGeometry.bounds(outline(spacing: 6)) }
+
+    /// The shape scaled uniformly about the centre of its bounding box.
+    func scaled(by f: CGFloat) -> RecognizedShape {
+        let b = bounds
+        let c = CGPoint(x: b.midX, y: b.midY)
+        func map(_ p: CGPoint) -> CGPoint { CGPoint(x: c.x + (p.x - c.x) * f, y: c.y + (p.y - c.y) * f) }
+        switch self {
+        case .line(let a, let b): return .line(map(a), map(b))
+        case .polygon(let pts): return .polygon(pts.map(map))
+        case .ellipse(let center, let rx, let ry, let rot): return .ellipse(center: map(center), rx: rx * f, ry: ry * f, rotation: rot)
+        }
+    }
+
     /// The shape rescaled so that its bounding box spans from `anchor` to `point` (used while the
     /// pencil keeps moving after a snap, so the student can adjust the size before lifting).
     func adjusted(anchor: CGPoint, original: CGPoint, to point: CGPoint) -> RecognizedShape {
