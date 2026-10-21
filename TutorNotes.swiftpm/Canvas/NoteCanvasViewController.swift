@@ -41,6 +41,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     let hoverPreview = HoverPreviewView()
     let shapePreview = ShapePreviewLayer()
     let regionLayer = CAShapeLayer()
+    let findHighlights = FindHighlightLayer()
     var regionStartDoc: CGPoint?
     var strokeObserver: StrokeObserverGesture!
     var holdTimer: Timer?
@@ -117,6 +118,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         regionLayer.strokeColor = UIColor.systemIndigo.cgColor
         regionLayer.lineDashPattern = [7, 5]
         chrome.layer.addSublayer(regionLayer)
+        chrome.layer.insertSublayer(findHighlights, at: 0)
 
         setupGestures()
         document.canvas = self
@@ -211,6 +213,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             selectionView.layoutChrome(zoom: z)
         }
         regionLayer.lineWidth = 2 / z
+        layoutFindHighlights()
         if document.isFreeform { updateZoomLimits() }
         updateVisiblePages()
     }

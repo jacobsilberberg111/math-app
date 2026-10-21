@@ -16,11 +16,13 @@ final class EditorModel: CanvasHost {
     let tutor: TutorEngine
     let tools = ToolState()
     let audio: AudioController
+    let find: FindController
 
     @ObservationIgnored weak var canvas: NoteCanvasViewController? {
         didSet {
             tutor.canvas = canvas
             audio.canvas = canvas
+            find.canvas = canvas
         }
     }
 
@@ -59,6 +61,7 @@ final class EditorModel: CanvasHost {
         self.document = document
         self.tutor = TutorEngine(document: document)
         self.audio = AudioController(document: document)
+        self.find = FindController(document: document)
     }
 
     var pageCount: Int { document.content.pages.count }
@@ -317,6 +320,7 @@ final class EditorModel: CanvasHost {
         onShowTutorChanged = nil
         pauseStudyClock()
         if let before = watchingBeforeExam { tutor.watching = before }
+        find.close()
         audio.stopAll()
         tutor.shutdown()
         // Saving stamps modifiedAt, so only save real changes: opening a note to read it
