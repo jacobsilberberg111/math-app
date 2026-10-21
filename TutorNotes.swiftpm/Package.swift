@@ -6,15 +6,15 @@ import PackageDescription
 import AppleProductTypes
 
 let package = Package(
-    name: "Tutor Notes",
+    name: "Margin",
     platforms: [
         .iOS("17.0")
     ],
     products: [
         .iOSApplication(
-            name: "Tutor Notes",
+            name: "Margin",
             targets: ["AppModule"],
-            bundleIdentifier: "com.example.tutornotes",
+            bundleIdentifier: "com.jacobsilberberg.margin",
             teamIdentifier: "",
             displayVersion: "1.0",
             bundleVersion: "1",

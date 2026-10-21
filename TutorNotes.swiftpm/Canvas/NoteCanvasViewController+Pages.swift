@@ -15,6 +15,7 @@ extension NoteCanvasViewController {
         }
         flushReveals()
         select(nil)
+        endShapeEditing()
         clearRegion()
         let widthChanged = abs(underlay.bounds.width - document.documentSize.width) > 0.5
         documentDidReplaceDrawing()

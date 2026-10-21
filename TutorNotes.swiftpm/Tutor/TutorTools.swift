@@ -55,7 +55,7 @@ enum TutorTools {
              ], required: ["page", "x", "y", "lines"])),
 
         tool("draw",
-             "Draw freehand ink with your pen: diagrams, geometry figures, triangles, vectors, arrows connecting ideas, sketches of curves. Points are page coordinates and get smoothed into natural pen strokes (set closed for polygons). For accurate function graphs use `graph` instead.",
+             "Draw freehand ink with your pen: diagrams, sketches, vectors, arrows connecting ideas, sketches of curves. Points are page coordinates and get smoothed into natural pen strokes (set closed for polygons). For accurate function graphs use `graph`; for polygons with labelled sides or angles use `geometry`, which places the labels for you.",
              object([
                 ("page", page),
                 ("strokes", ["type": "array", "description": "Each stroke is one pen movement.",
@@ -71,6 +71,33 @@ enum TutorTools {
                 ("labels", ["type": "array", "description": "Short labels placed at points, e.g. vertex names or side lengths. Math allowed with $...$.",
                             "items": object([("x", prop("number", "x")), ("y", prop("number", "y")), ("text", prop("string", "Label"))], required: ["x", "y", "text"])]),
              ], required: ["page", "strokes"])),
+
+        tool("geometry",
+             "Draw a labelled geometry figure: a triangle, quadrilateral or other polygon. Give the vertices in order (page points). Labels are placed for you: angle labels sit inside the angle beside an arc (or a right-angle square), side labels sit just outside the middle of their side, and vertex names sit just outside their corner. Use this for any figure with labelled sides or angles (right-angled triangles with θ, side lengths, similar or congruent shapes) instead of placing labels yourself with `draw`. Call it once per figure and leave at least 60 pt between figures.",
+             object([
+                ("page", page),
+                ("vertices", ["type": "array", "description": "The corners in order around the shape, at least 3.",
+                              "items": object([
+                                ("x", prop("number", "x in page points.")),
+                                ("y", prop("number", "y in page points.")),
+                                ("name", prop("string", "Optional vertex name shown at the corner, e.g. \"A\".")),
+                              ], required: ["x", "y"])]),
+                ("sides", ["type": "array", "description": "Labels or equal-side ticks for sides. A side is named by its two end vertices.",
+                           "items": object([
+                            ("from", prop("string", "Vertex name, or its 1-based position in `vertices`.")),
+                            ("to", prop("string", "The adjacent vertex at the other end of the side.")),
+                            ("text", prop("string", "Optional label, e.g. \"5 cm\", \"$x$\", \"hyp\".")),
+                            ("ticks", prop("integer", "Optional equal-length tick marks, 1–3.")),
+                           ], required: ["from", "to"])]),
+                ("angles", ["type": "array", "description": "Angle marks and labels at vertices.",
+                            "items": object([
+                                ("vertex", prop("string", "Vertex name, or its 1-based position in `vertices`.")),
+                                ("text", prop("string", "Optional label inside the angle, e.g. \"$\\theta$\" or \"$35^\\circ$\".")),
+                                ("mark", enumProp(["arc", "double_arc", "right", "none"], "Default: right for a 90° corner, otherwise arc.")),
+                            ], required: ["vertex"])]),
+                ("color", color),
+                ("width", prop("number", "Pen width 1–6 (default 2.2).")),
+             ], required: ["page", "vertices"])),
 
         tool("annotate",
              "Mark up the student's work like a teacher with a red pen: circle, underline, box, arrow, highlight, strike, bracket, tick, cross, question mark or star. Give the target rectangle tightly around the content (x, y, width, height) — or from/to points for an arrow. Add a very short label when useful (\"sign error\", \"check this\"). Prefer this over `draw` for marking up.",

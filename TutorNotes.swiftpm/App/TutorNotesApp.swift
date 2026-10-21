@@ -11,6 +11,7 @@ struct TutorNotesApp: App {
                 .environment(library)
                 .environmentObject(settings)
                 .tint(Color(hex: "#5B5BD6"))
+                .onOpenURL { library.openNoteFile($0) }
         }
     }
 }

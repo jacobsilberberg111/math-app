@@ -24,6 +24,11 @@ final class LibraryStore {
     /// render); views observe `thumbnailVersion` instead.
     @ObservationIgnored var thumbnails: [UUID: UIImage] = [:]
     var thumbnailVersion = 0
+    /// A note that arrived from outside (a note file from AirDrop or Files) and should be opened;
+    /// whichever view shows notes clears it.
+    var pendingOpen: NoteMeta?
+    /// Why the last note file couldn't be opened, until its alert is dismissed.
+    var importFailure: String?
 
     init() {
         load()
@@ -50,7 +55,7 @@ final class LibraryStore {
         subjects = [maths, Subject(name: "Physics", colorHex: Subject.palette[4])]
         saveSubjects()
         let paper = PaperStyle(pattern: .grid, color: .white)
-        let meta = NoteMeta(title: "Welcome to Tutor Notes", subjectID: maths.id, paper: paper)
+        let meta = NoteMeta(title: "Welcome to Margin", subjectID: maths.id, paper: paper)
         var content = NoteContent()
         content.pages = [Page(paper: paper)]
         let doc = NoteDocument.create(meta: meta, content: content)

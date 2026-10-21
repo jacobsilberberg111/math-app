@@ -500,7 +500,7 @@ struct TutorEmptyState: View {
                 tip("sparkles", "Tap **Ask**, then drag around any working to check it, get a hint, or have it explained.")
                 tip("eye", "With **Watching** on, the tutor glances at your work when you pause — it circles slips and marks finished answers.")
                 tip("pencil.and.list.clipboard", "Ask for **practice questions**: answer them in the boxes and they get marked.")
-                tip("hand.tap", "**Squeeze** Apple Pencil Pro (or set double-tap in Settings) to summon the tutor where you're writing.")
+                tip("hand.tap", "**Double-tap** the page or Apple Pencil (or squeeze a Pencil Pro) to summon the tutor where you're writing.")
                 tip("paperclip", "**Attach** worksheets, textbook pages or mark schemes as context.")
             }
         }

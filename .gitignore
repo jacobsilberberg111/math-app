@@ -4,3 +4,6 @@ xcuserdata/
 .build/
 .swiftpm/xcode/
 DerivedData/
+# Written by xcodegen from the `info:` section of project.yml
+/TutorNotes-Info.plist
+dist/

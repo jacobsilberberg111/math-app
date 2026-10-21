@@ -53,13 +53,13 @@ jobs:
           APP=$(find build/device/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
           mkdir -p Payload
           cp -R "$APP" Payload/
-          zip -qry TutorNotes-unsigned.ipa Payload
-          ls -la TutorNotes-unsigned.ipa
+          zip -qry Margin.ipa Payload
+          ls -la Margin.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: TutorNotes-unsigned-ipa
-          path: TutorNotes-unsigned.ipa
+          name: Margin-ipa
+          path: Margin.ipa
           retention-days: 30
 
       - name: Boot iPad simulator
@@ -78,33 +78,33 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p screenshots
-          xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding
+          xcrun simctl launch "$DEVICE" com.jacobsilberberg.margin -uitest-skip-onboarding
           sleep 6
           xcrun simctl io "$DEVICE" screenshot screenshots/1-library.png
-          xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
-          xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding -uitest-open-first-note
+          xcrun simctl terminate "$DEVICE" com.jacobsilberberg.margin || true
+          xcrun simctl launch "$DEVICE" com.jacobsilberberg.margin -uitest-skip-onboarding -uitest-open-first-note
           sleep 14
           xcrun simctl io "$DEVICE" screenshot screenshots/2-editor.png
-          xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
-          xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding -uitest-open-first-note -uitest-show-tutor
+          xcrun simctl terminate "$DEVICE" com.jacobsilberberg.margin || true
+          xcrun simctl launch "$DEVICE" com.jacobsilberberg.margin -uitest-skip-onboarding -uitest-open-first-note -uitest-show-tutor
           sleep 14
           xcrun simctl io "$DEVICE" screenshot screenshots/3-editor-tutor.png
-          xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
+          xcrun simctl terminate "$DEVICE" com.jacobsilberberg.margin || true
 
       - name: Record demo video
         continue-on-error: true
         run: |
           mkdir -p video
           # Fresh data so the demo starts from the welcome note.
-          xcrun simctl uninstall "$DEVICE" com.example.tutornotes || true
+          xcrun simctl uninstall "$DEVICE" com.jacobsilberberg.margin || true
           APP=$(find build/sim/Build/Products/Debug-iphonesimulator -maxdepth 1 -name "*.app" | head -1)
           xcrun simctl install "$DEVICE" "$APP"
-          xcrun simctl spawn "$DEVICE" log stream --style compact --level debug --predicate 'process == "Tutor Notes"' > video/os-log.txt 2>&1 &
+          xcrun simctl spawn "$DEVICE" log stream --style compact --level debug --predicate 'process == "Margin"' > video/os-log.txt 2>&1 &
           LOGP=$!
           xcrun simctl io "$DEVICE" recordVideo --codec=h264 --force video/demo.mp4 &
           REC=$!
           sleep 3
-          xcrun simctl launch --console-pty "$DEVICE" com.example.tutornotes -demo-script > video/app-log.txt 2>&1 &
+          xcrun simctl launch --console-pty "$DEVICE" com.jacobsilberberg.margin -demo-script > video/app-log.txt 2>&1 &
           for i in $(seq 1 300); do
             if grep -q "DEMO_COMPLETE" video/app-log.txt 2>/dev/null; then echo "demo finished after ${i}s"; break; fi
             sleep 1
@@ -145,13 +145,21 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -version
-          xcodebuild -scheme "Tutor Notes" -destination 'generic/platform=iOS Simulator' \
+          xcodebuild -scheme "Margin" -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ../pkg-build.log | grep -E "error:|warning:|BUILD" | sort -u | head -200 || true
           grep -q "BUILD SUCCEEDED" ../pkg-build.log
           echo "Swift files compiled: $(grep -c 'SwiftCompile normal' ../pkg-build.log || true)"
       - name: Errors summary
         if: failure()
         run: grep -E "error:" pkg-build.log | sort -u | head -100 || true
+
+  core-tests:
+    name: Core unit tests
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash CoreTests/run.sh
 
   server:
     name: Railway server tests

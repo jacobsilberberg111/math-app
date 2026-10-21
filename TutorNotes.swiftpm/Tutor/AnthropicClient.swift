@@ -46,7 +46,7 @@ enum StreamEvent: Sendable {
 }
 
 /// Minimal raw-HTTP client for the Claude API (there is no official Swift SDK). Talks either to
-/// api.anthropic.com with an API key, or to the Tutor Notes server (see /server), which adds the
+/// api.anthropic.com with an API key, or to the Margin server (see /server), which adds the
 /// key itself and only needs the app's access token.
 struct AnthropicClient: Sendable {
     enum Auth: Sendable {

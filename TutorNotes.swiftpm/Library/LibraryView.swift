@@ -17,6 +17,7 @@ struct LibraryView: View {
     @State private var openNote: NoteMeta?
     @State private var showSettings = false
     @State private var showPDFImporter = false
+    @State private var showNoteImporter = false
     @State private var renaming: NoteMeta?
     @State private var renameText = ""
     @State private var newSubjectName = ""
@@ -122,6 +123,7 @@ struct LibraryView: View {
         .alert("Couldn't import that PDF", isPresented: $importFailed) {
             Button("OK", role: .cancel) {}
         }
+        .noteFileImport(isPresented: $showNoteImporter, canOpen: openNote == nil, open: open)
         .alert("Rename Note", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $renameText)
             Button("Rename") { if let r = renaming { library.rename(r, to: renameText) }; renaming = nil }
@@ -197,7 +199,7 @@ struct LibraryView: View {
                 }
             }
         }
-        .navigationTitle("Tutor Notes")
+        .navigationTitle("Margin")
         .toolbar {
             ToolbarItem(placement: .bottomBar) {
                 Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
@@ -268,6 +270,7 @@ struct LibraryView: View {
             Menu {
                 Button { createBoard(title: nil) } label: { Label("Freeform Board", systemImage: "scribble.variable") }
                 Button { showPastPaper = true } label: { Label("Past Paper…", systemImage: "doc.text.magnifyingglass") }
+                Button { showNoteImporter = true } label: { Label("Import Note File…", systemImage: "square.and.arrow.down") }
                 if DocumentScanner.isAvailable {
                     Button { showScanner = true } label: { Label("Scan Document", systemImage: "doc.viewfinder") }
                 }
@@ -437,14 +440,14 @@ struct OnboardingView: View {
             HStack(spacing: 14) {
                 TutorOrb(active: true, size: 44)
                 VStack(alignment: .leading) {
-                    Text("Tutor Notes").font(.largeTitle.bold())
+                    Text("Margin").font(.largeTitle.bold())
                     Text("Notes with a tutor who works on the page with you.").foregroundStyle(.secondary)
                 }
             }
             VStack(alignment: .leading, spacing: 14) {
                 row("pencil.tip", "Write naturally", "Apple Pencil draws, fingers scroll. Draw a shape and hold to snap it perfect. Two-finger tap to undo.")
                 row("sparkles", "Ask about anything", "Tap Ask and drag around your working — check it, get a hint, see the next step.")
-                row("eye", "It watches as you work", "Pause, and your tutor glances at the page: it circles slips and marks finished answers.")
+                row("hand.tap", "Double-tap for help", "Double-tap the page with a finger, or double-tap Apple Pencil, to open the Ask menu right where you're working.")
                 row("chart.xyaxis.line", "Real math on the page", "Typeset algebra, graphs with asymptotes and shading, number lines, tables and diagrams.")
             }
             VStack(alignment: .leading, spacing: 8) {

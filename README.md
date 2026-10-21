@@ -1,4 +1,4 @@
-# Tutor Notes
+# Margin
 
 An iPad note-taking app for Apple Pencil, with a built-in Claude tutor that works **on the page** with you. It writes in clean type (or handwriting, if you prefer), typesets math, draws graphs and diagrams, circles your mistakes, adds practice questions, and marks your answers live.
 
@@ -79,9 +79,10 @@ Any note with imported PDF pages can be turned into a past paper from the **+** 
 
 - **PencilKit ink** with Apple's low-latency rendering and palm rejection. Pens: ballpoint, fountain, pencil, monoline, crayon, watercolor, plus highlighter, stroke/pixel eraser, lasso, ruler.
 - **Favourite colours and widths** per tool, Notability-style. Tap a selected swatch or width to edit it.
-- **Draw-and-hold shape snapping:** lines snap to 0/45/90°, and circles, ellipses, rectangles and triangles snap clean. Keep moving after the snap to resize. Apple Pencil Pro gives haptic feedback on snap.
-- **Apple Pencil:** double-tap follows your system setting (eraser, previous tool, palette) or can open the tutor. **Squeeze** (Pencil Pro) opens the tutor menu right where you're hovering. **Hover preview** shows the nib size and colour (M2 and later iPads).
-- **Finger gestures:** fingers scroll and zoom while the pencil draws (finger drawing is optional). Two-finger tap undoes, three-finger tap redoes, and double-tap returns to fit-width.
+- **Draw-and-hold shape snapping:** sketch a shape and hold: lines snap to 0/45/90°, and circles, ellipses, rectangles and triangles snap clean. Keep moving after the snap to resize, or use the **− / +** bar that appears above the shape. Apple Pencil Pro gives haptic feedback on snap.
+- **Apple Pencil:** double-tap opens the tutor's Ask menu where you're working (change it in Settings to follow the system setting, switch to the eraser, or go back to the previous tool). **Squeeze** (Pencil Pro) opens the tutor menu right where you're hovering. **Hover preview** shows the nib size and colour (M2 and later iPads).
+- **Finger gestures:** fingers scroll and zoom while the pencil draws (finger drawing is optional). Two-finger tap undoes, three-finger tap redoes, and double-tap opens the Ask menu.
+- **Palm rejection:** a hand resting on the page while you write doesn't scroll, zoom, tap or undo. A touch counts as your hand if it lands while the pencil is on or hovering over the glass, is already down when the pencil lands, or is palm-sized.
 - **Continuous pages:** blank, ruled, narrow, grid, small grid, graph, dotted and Cornell paper in six colours. Pages are added automatically as you write near the bottom. The page navigator lets you jump to, insert, duplicate and delete pages.
 - **Text boxes** support Scribble. **Images** come from Photos. **PDF import** creates annotatable pages, either as a new note or appended to one. **PDF export** renders vector elements with high-resolution ink.
 - **Audio recording synced to ink:** during playback, strokes appear as they were written, and tapping a stroke jumps the audio to that moment.
@@ -100,7 +101,8 @@ Default model is **Claude Sonnet 5.5**. Switch to Opus 5.5, Haiku 5.5 or Fable 5
 | `graph` | Cartesian planes: functions in x, points, segments and vectors, dashed asymptotes, shaded areas, blank planes to sketch on, and updates to existing graphs. |
 | `number_line` | Inequalities, intervals, open and closed points. |
 | `table` | Tables of values. Cells can contain math. |
-| `draw` | Freehand pen strokes for geometry and diagrams, with labels. |
+| `geometry` | Triangles and other polygons with side, angle and vertex labels placed automatically: angle labels inside the angle beside an arc or right-angle square, side labels beside their side, equal-side ticks. |
+| `draw` | Freehand pen strokes for diagrams and sketches, with labels. |
 | `annotate` | Teacher marks: circle, underline, box, arrow, highlight, strike, bracket, tick, cross, ?, ★, plus a short label. |
 | `add_question` / `mark` | Practice cards with an answer space and a hidden answer key. Marks are ticks and crosses with scores and comments. |
 | `move` / `edit` / `delete` / `erase_ink` / `add_page` / `clear_marks` | The same edits a person can make to the page. |
@@ -111,12 +113,13 @@ Default model is **Claude Sonnet 5.5**. Switch to Opus 5.5, Haiku 5.5 or Fable 5
 
 **What makes it feel present:**
 - A glowing **tutor cursor** glides across the page and follows its pen as it writes. A status pill shows what it's doing ("Marking up your work…").
-- **Watching mode:** when you pause writing, it glances at the new work and decides whether to step in. It might circle a slip, mark a finished answer, or say nothing. You can set the involvement to Quiet, Balanced or Hands-on.
+- **Watching mode (off by default):** the tutor only looks at your page when you ask. Turn on **Settings → Watch while I work** and, when you pause writing, it glances at the new work and decides whether to step in. You can set the involvement to Quiet, Balanced or Hands-on.
 - **Ask anywhere:** the **Ask** tool lets you drag around or tap any working to get a quick menu (Check, Hint, Next step, Explain, Full solution, Graph it, Similar question, Ask…). A long-press or select on any item gives the same menu, and so does squeezing the pencil.
 - **Hint button:** next to Ask in the toolbar. One tap gets a small nudge written beside your latest working (or the question's stored hint, free and instant), never the answer. On a past paper the tutor also looks at the question you're on.
 - **Stuck detection:** "Stuck on Q2? Get a hint" appears if you stop on a question. Stored hints reveal instantly and cost nothing.
 - **Avoids your writing:** it's told where your ink and the free space are, and anything it places is nudged away from your work.
 - **Undo the tutor:** every turn can be reverted in one tap. Normal undo works too.
+- **Work with its marks:** the eraser rubs out the tutor's writing, marks and labels. Tap one with a finger to select it, then drag to move it or use the bar to ask about it, edit it, duplicate or delete it.
 - **Attachments:** PDFs, images and text (worksheets, textbook pages, mark schemes) are uploaded once through the Files API and used as context.
 - **Voice:** dictate questions and optionally have feedback read aloud.
 

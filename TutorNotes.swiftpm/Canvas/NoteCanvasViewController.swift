@@ -41,6 +41,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     let hoverPreview = HoverPreviewView()
     let shapePreview = ShapePreviewLayer()
     let regionLayer = CAShapeLayer()
+    let findHighlights = FindHighlightLayer()
     var regionStartDoc: CGPoint?
     var strokeObserver: StrokeObserverGesture!
     var holdTimer: Timer?
@@ -51,6 +52,25 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     var tapGesture: UITapGestureRecognizer!
     var regionPan: UIPanGestureRecognizer!
     var longPress: UILongPressGestureRecognizer!
+    /// The pending one-shot colour sample, if the eyedropper is armed (see +Eyedropper).
+    var eyedropper: EyedropperSession?
+    /// Finger-only gestures (undo/redo taps, double-tap for the Ask menu, long-press) a resting hand must never trigger.
+    var fingerOnlyGestures: [UIGestureRecognizer] = []
+    var lastTapWasFinger = false
+
+    // Palm rejection (see +Palm)
+    var touchWatcher: TouchWatcherGesture!
+    var pencilTouches = Set<UITouch>()
+    var fingerTouches = Set<UITouch>()
+    var palmTouches = Set<UITouch>()
+    var pencilHovering = false
+    var palmGuardUntil = Date.distantPast
+    var scrollingBlockedForPalm = false
+    var scrollBeforeFingers: (offset: CGPoint, zoom: CGFloat, date: Date)?
+
+    // Snapped-shape resizing (see +Shapes)
+    let shapeBar = ShapeBarView()
+    var editableShape: EditableShape?
 
     // Tutor state (see +Tutor)
     let presence = TutorPresenceView()
@@ -117,8 +137,11 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         regionLayer.strokeColor = UIColor.systemIndigo.cgColor
         regionLayer.lineDashPattern = [7, 5]
         chrome.layer.addSublayer(regionLayer)
+        chrome.layer.insertSublayer(findHighlights, at: 0)
 
         setupGestures()
+        setupPalmRejection()
+        setupShapeBar()
         document.canvas = self
         reloadPages()
         reloadAllElements()
@@ -160,6 +183,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         displayLink?.invalidate()
         displayLink = nil
         holdTimer?.invalidate()
+        cancelEyedropper()
     }
 
     // MARK: Layout & zoom
@@ -211,6 +235,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             selectionView.layoutChrome(zoom: z)
         }
         regionLayer.lineWidth = 2 / z
+        layoutFindHighlights()
+        layoutShapeBar()
         if document.isFreeform { updateZoomLimits() }
         updateVisiblePages()
     }
@@ -510,6 +536,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             canvasView.drawing = document.drawing
             isApplyingDrawing = false
         }
+        revalidateEditableShape()
         host?.canvasUndoStateChanged()
     }
 
@@ -530,7 +557,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         }
         tool = newTool
         canvasView.tool = newTool.pkTool()
-        canvasView.drawingPolicy = newTool.fingerDrawing ? .anyInput : .pencilOnly
+        applyDrawingPolicy()
         canvasView.isRulerActive = newTool.rulerActive
         canvasView.drawingGestureRecognizer.isEnabled = newTool.kind.usesPencilKit && replayTime == nil
         // In region-select mode one finger draws the region; scroll with two.
@@ -539,6 +566,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         strokeObserver?.acceptsFinger = newTool.fingerDrawing
         strokeObserver?.isEnabled = newTool.shapeRecognition && (newTool.kind == .pen || newTool.kind == .highlighter) && replayTime == nil
         if !newTool.kind.usesPencilKit { hoverPreview.hide() }
+        eyedropperToolApplied()
+        if newTool.kind != .pen && newTool.kind != .highlighter { endShapeEditing() }
     }
 
     // MARK: PencilKit
@@ -548,9 +577,11 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         let newDrawing = canvasView.drawing
         let oldCount = document.drawing.strokes.count
         document.canvasDrawingChanged(newDrawing)
+        if newDrawing.strokes.count < oldCount { revalidateEditableShape() }
         // The pixel eraser splits strokes, which also grows the count; that isn't new writing.
         if newDrawing.strokes.count > oldCount, tool.kind != .eraser {
             let added = newDrawing.strokes[oldCount...].map(\.renderBounds)
+            endShapeEditing()
             applyPendingSnapIfReady()
             host?.canvasStudentWrote(docRects: added)
             autoAddPageIfNeeded(added)

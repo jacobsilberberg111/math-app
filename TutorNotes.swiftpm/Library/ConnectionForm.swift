@@ -17,7 +17,7 @@ struct ConnectionForm: View {
 
             switch settings.connection {
             case .server:
-                TextField("Server URL, e.g. tutor-notes.up.railway.app", text: $settings.serverURL)
+                TextField("Server URL, e.g. margin.up.railway.app", text: $settings.serverURL)
                     .textFieldStyle(.roundedBorder)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)

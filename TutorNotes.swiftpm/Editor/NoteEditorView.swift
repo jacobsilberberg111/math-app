@@ -58,7 +58,7 @@ struct NoteEditorView: View {
 
     struct ExportItem: Identifiable {
         let id = UUID()
-        let url: URL
+        let urls: [URL]
     }
 
     var body: some View {
@@ -68,6 +68,7 @@ struct NoteEditorView: View {
                          onSwitchNote: onSwitchNote.map { open in { (meta: NoteMeta) in switchTo(meta, open) } })
             EditorToolStrip(model: model)
             PaperBar(model: model)
+            FindBar(find: model.find)
             HStack(spacing: 0) {
                 canvasArea
                 TutorSidePanel(model: model, shown: panelShown)
@@ -134,7 +135,7 @@ struct NoteEditorView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Allow Tutor Notes to use the microphone in Settings to record audio with your notes.")
+            Text("Allow Margin to use the microphone in Settings to record audio with your notes.")
         }
         .sheet(isPresented: $model.showPages) { PageNavigator(model: model) }
         .sheet(isPresented: $model.showPractice) { PracticeSheet(model: model) }
@@ -147,7 +148,9 @@ struct NoteEditorView: View {
             }, onCancel: { showScanner = false })
             .ignoresSafeArea()
         }
-        .sheet(item: $exportItem) { item in ShareSheet(items: [item.url]) }
+        .sheet(item: $exportItem) { item in ShareSheet(items: item.urls) }
+        .sheet(item: $model.inkConversion) { InkConversionSheet(conversion: $0, model: model).environmentObject(settings) }
+        .noteFileArrival(switchTo: { meta in if let onSwitchNote { switchTo(meta, onSwitchNote) } }, flash: { model.flash($0) })
         .statusBarHidden(false)
     }
 
@@ -218,11 +221,17 @@ struct NoteEditorView: View {
         model.flash("Added \(pages.count) page\(pages.count == 1 ? "" : "s")")
     }
 
-    private func export() {
-        if let url = PageRenderer.exportPDF(model.document) {
-            exportItem = ExportItem(url: url)
-        } else {
+    /// Files go to the share sheet (AirDrop, Files, Mail…); Print opens the print dialog.
+    private func export(_ kind: ExportKind) {
+        model.document.saveNow()
+        guard let urls = NoteExporter.files(for: kind, document: model.document) else {
             model.flash("Couldn't export this note")
+            return
+        }
+        if kind == .print {
+            if !NoteExporter.printPDF(urls[0], jobName: model.document.meta.title) { model.flash("Couldn't print this note") }
+        } else {
+            exportItem = ExportItem(urls: urls)
         }
     }
 
