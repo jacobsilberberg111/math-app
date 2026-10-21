@@ -24,6 +24,11 @@ final class LibraryStore {
     /// render); views observe `thumbnailVersion` instead.
     @ObservationIgnored var thumbnails: [UUID: UIImage] = [:]
     var thumbnailVersion = 0
+    /// A note that arrived from outside (a note file from AirDrop or Files) and should be opened;
+    /// whichever view shows notes clears it.
+    var pendingOpen: NoteMeta?
+    /// Why the last note file couldn't be opened, until its alert is dismissed.
+    var importFailure: String?
 
     init() {
         load()

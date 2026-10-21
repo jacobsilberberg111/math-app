@@ -17,6 +17,7 @@ struct LibraryView: View {
     @State private var openNote: NoteMeta?
     @State private var showSettings = false
     @State private var showPDFImporter = false
+    @State private var showNoteImporter = false
     @State private var renaming: NoteMeta?
     @State private var renameText = ""
     @State private var newSubjectName = ""
@@ -122,6 +123,7 @@ struct LibraryView: View {
         .alert("Couldn't import that PDF", isPresented: $importFailed) {
             Button("OK", role: .cancel) {}
         }
+        .noteFileImport(isPresented: $showNoteImporter, canOpen: openNote == nil, open: open)
         .alert("Rename Note", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $renameText)
             Button("Rename") { if let r = renaming { library.rename(r, to: renameText) }; renaming = nil }
@@ -268,6 +270,7 @@ struct LibraryView: View {
             Menu {
                 Button { createBoard(title: nil) } label: { Label("Freeform Board", systemImage: "scribble.variable") }
                 Button { showPastPaper = true } label: { Label("Past Paper…", systemImage: "doc.text.magnifyingglass") }
+                Button { showNoteImporter = true } label: { Label("Import Note File…", systemImage: "square.and.arrow.down") }
                 if DocumentScanner.isAvailable {
                     Button { showScanner = true } label: { Label("Scan Document", systemImage: "doc.viewfinder") }
                 }

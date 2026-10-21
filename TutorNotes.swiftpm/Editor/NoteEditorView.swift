@@ -58,7 +58,7 @@ struct NoteEditorView: View {
 
     struct ExportItem: Identifiable {
         let id = UUID()
-        let url: URL
+        let urls: [URL]
     }
 
     var body: some View {
@@ -147,7 +147,8 @@ struct NoteEditorView: View {
             }, onCancel: { showScanner = false })
             .ignoresSafeArea()
         }
-        .sheet(item: $exportItem) { item in ShareSheet(items: [item.url]) }
+        .sheet(item: $exportItem) { item in ShareSheet(items: item.urls) }
+        .noteFileArrival(switchTo: { meta in if let onSwitchNote { switchTo(meta, onSwitchNote) } }, flash: { model.flash($0) })
         .statusBarHidden(false)
     }
 
@@ -218,11 +219,17 @@ struct NoteEditorView: View {
         model.flash("Added \(pages.count) page\(pages.count == 1 ? "" : "s")")
     }
 
-    private func export() {
-        if let url = PageRenderer.exportPDF(model.document) {
-            exportItem = ExportItem(url: url)
-        } else {
+    /// Files go to the share sheet (AirDrop, Files, Mail…); Print opens the print dialog.
+    private func export(_ kind: ExportKind) {
+        model.document.saveNow()
+        guard let urls = NoteExporter.files(for: kind, document: model.document) else {
             model.flash("Couldn't export this note")
+            return
+        }
+        if kind == .print {
+            if !NoteExporter.printPDF(urls[0], jobName: model.document.meta.title) { model.flash("Couldn't print this note") }
+        } else {
+            exportItem = ExportItem(urls: urls)
         }
     }
 

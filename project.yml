@@ -24,6 +24,30 @@ targets:
       - TutorNotes.swiftpm/Utilities
       - TutorNotes.swiftpm/Demo
       - TutorNotes.swiftpm/Assets.xcassets
+    # XcodeGen writes this Info.plist (it isn't committed) and points INFOPLIST_FILE at it. Xcode
+    # merges it with the keys generated from the INFOPLIST_KEY_* settings below, so those still
+    # apply. It declares the ".margin" note file type and makes the app its editor, which is what
+    # lets AirDrop and Files hand a note to the app.
+    info:
+      path: TutorNotes-Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Tutor Notes Note
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.tutornotes.note
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.tutornotes.note
+            UTTypeDescription: Tutor Notes Note
+            UTTypeConformsTo:
+              - public.data
+              - public.content
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - margin
     settings:
       base:
         PRODUCT_NAME: Tutor Notes

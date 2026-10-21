@@ -10,7 +10,7 @@ struct EditorTopBar: View {
     var onClose: () -> Void
     var onInsertPhoto: () -> Void
     var onImportPDF: () -> Void
-    var onExport: () -> Void
+    var onExport: (ExportKind) -> Void
     var onScan: (() -> Void)?
     /// Closes this note and opens another (from the back button's recent notes).
     var onSwitchNote: ((NoteMeta) -> Void)?
@@ -124,7 +124,7 @@ struct EditorTopBar: View {
                         } else {
                             Button { model.showPages = true } label: { Label("Pages", systemImage: "square.grid.2x2") }
                         }
-                        Button { onExport() } label: { Label("Export", systemImage: "square.and.arrow.up") }
+                        Menu { ExportMenuItems(onExport: onExport) } label: { Label("Export", systemImage: "square.and.arrow.up") }
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -134,7 +134,7 @@ struct EditorTopBar: View {
                 .accessibilityLabel("Insert")
                 RecordButton(audio: model.audio)
                 if !compact {
-                    BarButton(symbol: "square.and.arrow.up", label: "Export") { onExport() }
+                    ExportMenu(onExport: onExport)
                 }
             }
             TutorToggleButton(model: model, showsLabel: !compact)
