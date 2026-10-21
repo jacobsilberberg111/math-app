@@ -93,6 +93,8 @@ struct EditorTopBar: View {
                     } else {
                         BarButton(symbol: "square.grid.2x2", label: "Pages") { model.showPages = true }
                     }
+                    BarButton(symbol: "magnifyingglass", label: "Find in Note") { model.find.open() }
+                        .keyboardShortcut("f", modifiers: .command)
                 }
                 if isBoard { BoardLinesMenu(document: model.document) }
                 Menu {
@@ -124,6 +126,7 @@ struct EditorTopBar: View {
                         } else {
                             Button { model.showPages = true } label: { Label("Pages", systemImage: "square.grid.2x2") }
                         }
+                        Button { model.find.open() } label: { Label("Find in Note", systemImage: "magnifyingglass") }
                         Button { onExport() } label: { Label("Export", systemImage: "square.and.arrow.up") }
                     }
                 } label: {
