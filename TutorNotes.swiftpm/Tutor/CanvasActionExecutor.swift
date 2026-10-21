@@ -397,6 +397,7 @@ final class CanvasActionExecutor {
             case "write": return try write(toolID: toolID, args)
             case "write_math": return try writeMath(toolID: toolID, args)
             case "draw": return try draw(args)
+            case "geometry": return try geometry(args)
             case "annotate": return try annotate(args)
             case "graph": return try graph(args)
             case "number_line": return try numberLine(args)

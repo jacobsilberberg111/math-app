@@ -9,5 +9,5 @@ APP=TutorNotes.swiftpm
 OUT="$(mktemp -d)/core-tests"
 swiftc -swift-version 5 -O -o "$OUT" CoreTests/main.swift \
   "$APP/Tutor/JSON.swift" "$APP/Math/Expression.swift" "$APP/Math/MathParser.swift" \
-  "$APP/Canvas/ShapeRecognizer.swift" "$APP/Model/StudyCore.swift"
+  "$APP/Canvas/ShapeRecognizer.swift" "$APP/Model/StudyCore.swift" "$APP/Math/GeometryLayout.swift"
 "$OUT"

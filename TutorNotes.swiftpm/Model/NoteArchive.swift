@@ -23,8 +23,8 @@ enum NoteArchiveError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notANote: return "That file isn't a Tutor Notes note."
-        case .newerVersion: return "That note was made with a newer version of Tutor Notes. Update the app to open it."
+        case .notANote: return "That file isn't a Margin note."
+        case .newerVersion: return "That note was made with a newer version of Margin. Update the app to open it."
         case .damaged: return "That note file is damaged."
         }
     }

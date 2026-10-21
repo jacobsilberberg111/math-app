@@ -1,4 +1,4 @@
-// Tutor Notes backend: a small authenticated relay between the iPad app and the Claude API.
+// Margin backend: a small authenticated relay between the iPad app and the Claude API.
 //
 // The app builds Claude requests itself (there is no official Swift SDK), so this server
 // doesn't construct or reinterpret them: it checks the app's access token, applies limits,
@@ -146,7 +146,7 @@ export function createProxyServer(config = loadConfig()) {
       return sendJSON(res, 200, {
         ok: true,
         configured,
-        service: 'tutor-notes-server',
+        service: 'margin-server',
         ...(configured ? {} : { problem: 'Set ANTHROPIC_API_KEY and APP_TOKEN in the service variables.' }),
       });
     }
@@ -254,7 +254,7 @@ if (isMain) {
   server.requestTimeout = 0;
   server.headersTimeout = 65_000;
   server.keepAliveTimeout = 61_000;
-  server.listen(config.port, () => console.log(`tutor-notes-server listening on :${config.port}`));
+  server.listen(config.port, () => console.log(`margin-server listening on :${config.port}`));
   const shutdown = () => server.close(() => process.exit(0));
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);

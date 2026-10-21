@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 extension NoteArchive {
     /// The type of a note file: the one the app declares in its Info.plist, else anything named
     /// `.margin` (builds without the declaration, such as Swift Playgrounds), else any file.
-    static let contentType = UTType("com.tutornotes.note") ?? UTType(filenameExtension: fileExtension) ?? .data
+    static let contentType = UTType("com.jacobsilberberg.margin.note") ?? UTType(filenameExtension: fileExtension) ?? .data
 }
 
 /// The Library's side of note files: "Import Note File…", opening notes queued in

@@ -365,7 +365,7 @@ final class SelectionOverlayView: UIView {
     func configure(for element: CanvasElement, zoom: CGFloat) {
         var list: [ElementAction] = [.askTutor]
         switch element.kind {
-        case .text where element.author == .student: list.append(.edit)
+        case .text: list.append(.edit)
         case .question(let q):
             if !q.revealedHint { list.append(.revealHint) }
             list.append(.checkAnswer)

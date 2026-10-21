@@ -593,6 +593,7 @@ final class TutorEngine {
         case "write": return "Writing…"
         case "write_math": return "Working it out on the page…"
         case "draw": return "Drawing…"
+        case "geometry": return "Drawing a figure…"
         case "annotate": return "Marking up your work…"
         case "graph": return "Drawing a graph…"
         case "number_line": return "Drawing a number line…"

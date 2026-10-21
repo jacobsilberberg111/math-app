@@ -7,7 +7,7 @@ extension PageRenderer {
 
     /// PDF metadata: the note's title and the app that made it.
     static func pdfFormat(for doc: NoteDocument) -> UIGraphicsPDFRendererFormat {
-        var info: [String: Any] = [kCGPDFContextCreator as String: "Tutor Notes"]
+        var info: [String: Any] = [kCGPDFContextCreator as String: "Margin"]
         let title = doc.meta.title.trimmed
         if !title.isEmpty { info[kCGPDFContextTitle as String] = title }
         let format = UIGraphicsPDFRendererFormat()

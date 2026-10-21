@@ -199,7 +199,7 @@ struct LibraryView: View {
                 }
             }
         }
-        .navigationTitle("Tutor Notes")
+        .navigationTitle("Margin")
         .toolbar {
             ToolbarItem(placement: .bottomBar) {
                 Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
@@ -440,14 +440,14 @@ struct OnboardingView: View {
             HStack(spacing: 14) {
                 TutorOrb(active: true, size: 44)
                 VStack(alignment: .leading) {
-                    Text("Tutor Notes").font(.largeTitle.bold())
+                    Text("Margin").font(.largeTitle.bold())
                     Text("Notes with a tutor who works on the page with you.").foregroundStyle(.secondary)
                 }
             }
             VStack(alignment: .leading, spacing: 14) {
                 row("pencil.tip", "Write naturally", "Apple Pencil draws, fingers scroll. Draw a shape and hold to snap it perfect. Two-finger tap to undo.")
                 row("sparkles", "Ask about anything", "Tap Ask and drag around your working — check it, get a hint, see the next step.")
-                row("eye", "It watches as you work", "Pause, and your tutor glances at the page: it circles slips and marks finished answers.")
+                row("hand.tap", "Double-tap for help", "Double-tap the page with a finger, or double-tap Apple Pencil, to open the Ask menu right where you're working.")
                 row("chart.xyaxis.line", "Real math on the page", "Typeset algebra, graphs with asymptotes and shading, number lines, tables and diagrams.")
             }
             VStack(alignment: .leading, spacing: 8) {

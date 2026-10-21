@@ -55,7 +55,7 @@ final class LibraryStore {
         subjects = [maths, Subject(name: "Physics", colorHex: Subject.palette[4])]
         saveSubjects()
         let paper = PaperStyle(pattern: .grid, color: .white)
-        let meta = NoteMeta(title: "Welcome to Tutor Notes", subjectID: maths.id, paper: paper)
+        let meta = NoteMeta(title: "Welcome to Margin", subjectID: maths.id, paper: paper)
         var content = NoteContent()
         content.pages = [Page(paper: paper)]
         let doc = NoteDocument.create(meta: meta, content: content)
