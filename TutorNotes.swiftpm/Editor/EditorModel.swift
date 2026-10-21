@@ -36,6 +36,8 @@ final class EditorModel: CanvasHost {
     var canUndo = false
     var canRedo = false
     var quickMenu: QuickMenuRequest?
+    /// Handwriting being converted to text or math, waiting for the student to confirm.
+    var inkConversion: InkConversion?
     var selectedElement: CanvasElement?
     var toast: String?
     var palettePresented = false

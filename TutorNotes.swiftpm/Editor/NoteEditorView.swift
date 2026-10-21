@@ -148,6 +148,7 @@ struct NoteEditorView: View {
             .ignoresSafeArea()
         }
         .sheet(item: $exportItem) { item in ShareSheet(items: [item.url]) }
+        .sheet(item: $model.inkConversion) { InkConversionSheet(conversion: $0, model: model) }
         .statusBarHidden(false)
     }
 
