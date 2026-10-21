@@ -10,8 +10,14 @@ struct HomeView: View {
     var newBoard: () -> Void
     var askTutor: () -> Void
     var importPDF: () -> Void
+    var pastPaper: () -> Void
+    var scan: (() -> Void)?
+    var reviewCards: () -> Void
+    var practiseWeakSpots: ([TopicStat]) -> Void
     var showAll: () -> Void
     var showSubject: (UUID) -> Void
+
+    private var study: StudyStore { StudyStore.shared }
 
     static var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
@@ -30,6 +36,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 30) {
                 summary
                 actions
+                studyRow
                 if let latest = recents.first {
                     section("Jump back in") { ContinueCard(meta: latest, subject: library.subject(latest.subjectID)) { open(latest) } }
                 }
@@ -48,6 +55,7 @@ struct HomeView: View {
                         }
                     }
                 }
+                topicsSection
                 if !waiting.isEmpty {
                     section("Waiting for you") {
                         VStack(spacing: 0) {
@@ -85,6 +93,10 @@ struct HomeView: View {
     private var summary: some View {
         let questions = library.notes.reduce(0) { $0 + ($1.openQuestions ?? 0) }
         var parts = [Date().formatted(.dateTime.weekday(.wide).month(.wide).day())]
+        let streak = study.streak
+        if streak > 1 { parts.append("\(streak)-day streak") }
+        let week = study.secondsThisWeek
+        if week >= 60 { parts.append("\(StudyStreak.duration(week)) this week") }
         if questions > 0 { parts.append("\(questions) question\(questions == 1 ? "" : "s") to finish") }
         return Text(parts.joined(separator: " · "))
             .font(.title3)
@@ -96,7 +108,78 @@ struct HomeView: View {
             ActionTile(symbol: "book.pages", tint: Color(hex: "#5B5BD6"), title: "New Notebook", detail: "Pages with lines or grid", action: newNotebook)
             ActionTile(symbol: "scribble.variable", tint: Color(hex: "#12A594"), title: "New Board", detail: "A freeform canvas that grows", action: newBoard)
             ActionTile(symbol: "sparkles", tint: Color(hex: settings.tutorInkHex), title: "Ask the Tutor", detail: "Start a board and talk it through", action: askTutor)
+            ActionTile(symbol: "doc.text.magnifyingglass", tint: Color(hex: "#E5484D"), title: "Past Paper", detail: "Timed practice, marked to the scheme", action: pastPaper)
+            if let scan {
+                ActionTile(symbol: "doc.viewfinder", tint: Color(hex: "#0090FF"), title: "Scan", detail: "Worksheets and textbook pages", action: scan)
+            }
             ActionTile(symbol: "doc.badge.arrow.up", tint: Color(hex: "#F76B15"), title: "Import PDF", detail: "Annotate a worksheet", action: importPDF)
+        }
+    }
+
+    /// Flashcards due today.
+    @ViewBuilder
+    private var studyRow: some View {
+        let due = study.dueCards().count
+        let total = study.cards.count
+        if total > 0 {
+            Button(action: reviewCards) {
+                HStack(spacing: 14) {
+                    Image(systemName: "rectangle.on.rectangle.angled")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(hex: "#8E4EC6").gradient))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(due > 0 ? "\(due) flashcard\(due == 1 ? "" : "s") to review" : "Flashcards: all caught up")
+                            .font(.headline).foregroundStyle(.primary)
+                        Text(due > 0 ? "A few minutes now keeps them from slipping." : "\(total) card\(total == 1 ? "" : "s") in your deck")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(due > 0 ? "Review" : "Browse")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(due > 0 ? Color.white : Color.accentColor)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(due > 0 ? Color.accentColor : Color.accentColor.opacity(0.12)))
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(PressableStyle())
+        }
+    }
+
+    /// How marked work is going, by topic: what to practise, and what's going well.
+    @ViewBuilder
+    private var topicsSection: some View {
+        let stats = study.topicStats()
+        let weak = TopicStats.weakest(stats)
+        let strong = Array(stats.filter { $0.score >= 0.75 }.sorted { $0.score > $1.score }.prefix(3))
+        if !stats.isEmpty {
+            section("Your topics") {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(weak + strong) { t in
+                        TopicBar(stat: t, subject: library.subject(t.subjectID))
+                    }
+                    if !weak.isEmpty {
+                        Button {
+                            practiseWeakSpots(weak)
+                        } label: {
+                            Label("Practise my weak spots", systemImage: "target")
+                                .font(.headline)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.top, 2)
+                    } else {
+                        Text("Nothing below 75% lately. Nice work.").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+            }
         }
     }
 
@@ -113,6 +196,37 @@ struct HomeView: View {
 }
 
 // MARK: - Tiles and cards
+
+private struct TopicBar: View {
+    let stat: TopicStat
+    let subject: Subject?
+
+    private var color: Color {
+        stat.score >= 0.75 ? Color(hex: "#30A46C") : (stat.score >= 0.5 ? Color(hex: "#F76B15") : Color(hex: "#E5484D"))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(stat.topic.prefix(1).uppercased() + stat.topic.dropFirst()).font(.subheadline.weight(.semibold)).lineLimit(1)
+                if let subject {
+                    Text(subject.name).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(Int((stat.score * 100).rounded()))%").font(.subheadline.weight(.bold).monospacedDigit()).foregroundStyle(color)
+                Text("· \(stat.attempts) marked").font(.caption).foregroundStyle(.secondary)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.15))
+                    Capsule().fill(color.gradient).frame(width: max(6, geo.size.width * stat.score))
+                }
+            }
+            .frame(height: 7)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
 
 private struct ActionTile: View {
     let symbol: String

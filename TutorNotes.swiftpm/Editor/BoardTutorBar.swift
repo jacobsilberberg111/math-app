@@ -10,6 +10,8 @@ struct BoardTutorBar: View {
     @State private var draft = ""
     @State private var dismissedReplyID: UUID?
     @State private var collapsed = false
+    /// Bumped to bounce the mic when the student circles something to ask about.
+    @State private var invite = 0
     @FocusState private var focused: Bool
 
     private var tutor: TutorEngine { model.tutor }
@@ -56,8 +58,10 @@ struct BoardTutorBar: View {
         }
         .onChange(of: model.focusBoardBar) { _, want in
             guard want else { return }
+            // Open the bar and point at the mic rather than raising the keyboard over the work:
+            // with a Pencil in hand, talking or tapping the field is the student's call.
             collapsed = false
-            focused = true
+            invite += 1
             model.focusBoardBar = false
         }
         .onChange(of: tutor.chat.count) { _, _ in
@@ -100,10 +104,10 @@ struct BoardTutorBar: View {
                 }
             } else {
                 // Chat replies are meant to be a sentence or two; anything longer is in the chat.
-                RichTextView(text: item.text, fontSize: 15)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(maxHeight: 132, alignment: .top)
-                    .clipped()
+                CappedHeight(limit: 132) {
+                    RichTextView(text: item.text, fontSize: 15)
+                }
+                .clipped()
             }
             if !item.actions.isEmpty {
                 Text(item.actions.map(\.summary).joined(separator: " · "))
@@ -144,6 +148,7 @@ struct BoardTutorBar: View {
                         .font(.system(size: 34))
                         .foregroundStyle(dictation.isRecording ? Color.red : tint)
                         .symbolEffect(.pulse, isActive: dictation.isRecording)
+                        .symbolEffect(.bounce, value: invite)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(dictation.isRecording ? "Stop and send" : "Talk to your tutor")
@@ -214,5 +219,21 @@ struct BoardTutorBar: View {
         tutor.send(text, focus: model.pendingFocus)
         model.pendingFocus = nil
         model.canvas?.clearRegion()
+    }
+}
+
+/// Its content's natural height, up to `limit` (a plain `.frame(maxHeight:)` would stretch short
+/// content to the limit).
+struct CappedHeight: Layout {
+    var limit: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let size = child.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? size.width, height: min(size.height, limit))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: nil))
     }
 }

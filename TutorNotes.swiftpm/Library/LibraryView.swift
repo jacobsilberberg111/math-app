@@ -25,6 +25,11 @@ struct LibraryView: View {
     @State private var pendingDelete: NoteMeta?
     @State private var showOnboarding = false
     @State private var importFailed = false
+    @State private var showPastPaper = false
+    @State private var showScanner = false
+    @State private var showFlashcards = false
+    /// Something for the tutor to do as soon as a note opens (e.g. practise weak spots).
+    @State private var startRequest: (noteID: UUID, request: EditorStartRequest)?
 
     var currentSubjectID: UUID? {
         if case .subject(let id) = selection { return id }
@@ -57,6 +62,10 @@ struct LibraryView: View {
                     if (selection ?? .home) == .home && search.trimmed.isEmpty {
                         HomeView(open: open, newNotebook: { createNote(defaultPaper) }, newBoard: { createBoard(title: nil) },
                                  askTutor: { createBoard(title: "Question") }, importPDF: { showPDFImporter = true },
+                                 pastPaper: { showPastPaper = true },
+                                 scan: DocumentScanner.isAvailable ? { showScanner = true } : nil,
+                                 reviewCards: { showFlashcards = true },
+                                 practiseWeakSpots: practiseWeakSpots,
                                  showAll: { selection = .all }, showSubject: { selection = .subject($0) })
                     } else {
                         grid
@@ -68,9 +77,32 @@ struct LibraryView: View {
             }
         }
         .fullScreenCover(item: $openNote) { meta in
-            NoteEditorContainer(meta: meta, onSwitchNote: switchTo)
+            NoteEditorContainer(meta: meta, onSwitchNote: switchTo,
+                                startRequest: startRequest?.noteID == meta.id ? startRequest?.request : nil)
                 .environment(library)
                 .environmentObject(settings)
+        }
+        .onChange(of: openNote?.id) { _, id in
+            if id == nil { startRequest = nil }
+        }
+        .sheet(isPresented: $showPastPaper) {
+            PastPaperSetupView(subjectID: currentSubjectID) { meta in openAfterSheet(meta) }
+                .environment(library)
+        }
+        .sheet(isPresented: $showFlashcards) {
+            FlashcardsView().environmentObject(settings)
+        }
+        .fullScreenCover(isPresented: $showScanner) {
+            DocumentScanner(onFinish: { images in
+                showScanner = false
+                guard let url = DocumentScanner.pdf(from: images, name: "Scan \(LibraryView.stamp)"),
+                      let meta = library.createNote(fromPDF: url, subjectID: currentSubjectID) else {
+                    importFailed = true
+                    return
+                }
+                openAfterSheet(meta)
+            }, onCancel: { showScanner = false })
+            .ignoresSafeArea()
         }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showOnboarding) { OnboardingView() }
@@ -230,6 +262,10 @@ struct LibraryView: View {
             Button { showPDFImporter = true } label: { Label("Import PDF", systemImage: "doc.badge.arrow.up") }
             Menu {
                 Button { createBoard(title: nil) } label: { Label("Freeform Board", systemImage: "scribble.variable") }
+                Button { showPastPaper = true } label: { Label("Past Paper…", systemImage: "doc.text.magnifyingglass") }
+                if DocumentScanner.isAvailable {
+                    Button { showScanner = true } label: { Label("Scan Document", systemImage: "doc.viewfinder") }
+                }
                 Section("Notebook") {
                     ForEach([PaperPattern.ruled, .grid, .dots, .blank, .graph, .cornell]) { p in
                         Button { createNote(PaperStyle(pattern: p, color: settings.defaultPaperColor)) } label: { Text(p.title) }
@@ -264,13 +300,29 @@ struct LibraryView: View {
         openNote = library.markOpened(meta)
     }
 
-    /// From the editor's recent-notes menu: the editor has closed its note; swap the cover.
-    private func switchTo(_ meta: NoteMeta) {
-        openNote = nil
+    /// Opens a note once a sheet or the scanner has finished going away (presenting during a
+    /// dismissal is dropped).
+    private func openAfterSheet(_ meta: NoteMeta) {
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 450_000_000)
+            try? await Task.sleep(nanoseconds: 550_000_000)
             open(meta)
         }
+    }
+
+    /// A fresh notebook where the tutor sets questions on the topics that have gone worst lately.
+    private func practiseWeakSpots(_ topics: [TopicStat]) {
+        let names = topics.map(\.topic)
+        let meta = library.createNote(title: "Weak spots \(LibraryView.stamp)", subjectID: topics.first?.subjectID ?? currentSubjectID,
+                                      paper: PaperStyle(pattern: .ruled, color: settings.defaultPaperColor))
+        let prompt = "Give me practice on what I've found hard lately: \(names.joined(separator: ", ")). Make 5 questions with add_question, easier to harder, mixing the topics (accurate hidden answers and solutions). Start each topic's first question with a one-line reminder of the key idea, written above it."
+        startRequest = (meta.id, EditorStartRequest(prompt: prompt, displayText: "Practise my weak spots"))
+        open(meta)
+    }
+
+    /// From the editor's recent-notes menu: the editor has closed its note. Giving the cover a
+    /// different item dismisses it and presents the new note.
+    private func switchTo(_ meta: NoteMeta) {
+        open(meta)
     }
 
     static let colourNames = ["#5B5BD6": "Indigo", "#E5484D": "Red", "#30A46C": "Green", "#F76B15": "Orange",
@@ -310,6 +362,7 @@ struct NoteCard: View {
 
                 HStack(spacing: 4) {
                     if meta.isFreeform { badge("scribble.variable") }
+                    if meta.isPastPaper { badge("doc.text.magnifyingglass") }
                     if meta.hasTutorSession { badge("sparkles") }
                     if meta.hasAudio { badge("waveform") }
                 }
@@ -324,7 +377,11 @@ struct NoteCard: View {
                         Text("·")
                     }
                     Text(meta.modifiedAt.shortRelative)
-                    Text(meta.isFreeform ? "· Board" : "· \(meta.pageCount) pg")
+                    if let score = meta.paperScore {
+                        Text("· \(score)")
+                    } else {
+                        Text(meta.isFreeform ? "· Board" : "· \(meta.pageCount) pg")
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

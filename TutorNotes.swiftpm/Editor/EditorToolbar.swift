@@ -11,6 +11,7 @@ struct EditorTopBar: View {
     var onInsertPhoto: () -> Void
     var onImportPDF: () -> Void
     var onExport: () -> Void
+    var onScan: (() -> Void)?
     /// Closes this note and opens another (from the back button's recent notes).
     var onSwitchNote: ((NoteMeta) -> Void)?
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -99,7 +100,18 @@ struct EditorTopBar: View {
                     if !isBoard {
                         Button { onImportPDF() } label: { Label("PDF Pages", systemImage: "doc.richtext") }
                     }
+                    if let onScan, !isBoard, DocumentScanner.isAvailable {
+                        Button { onScan() } label: { Label("Scan Pages", systemImage: "doc.viewfinder") }
+                    }
                     Button { model.selectTool(.text) } label: { Label("Text Box", systemImage: "textformat") }
+                    Divider()
+                    Button {
+                        model.showPanelIfNoKey()
+                        model.tutor.quick(.flashcards)
+                    } label: { Label("Flashcards from This Page", systemImage: "rectangle.on.rectangle.angled") }
+                    if model.canPractiseAsPastPaper {
+                        Button { model.practiseAsPastPaper() } label: { Label("Practise as Past Paper", systemImage: "doc.text.magnifyingglass") }
+                    }
                     if !isBoard {
                         Divider()
                         Button { model.document.appendPage(); model.canvas?.scrollToPage(model.pageCount - 1) } label: { Label("New Page", systemImage: "doc.badge.plus") }

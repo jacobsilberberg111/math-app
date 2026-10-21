@@ -42,5 +42,6 @@ targets:
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Record lectures alongside your notes and ask your tutor questions by voice.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turn what you say into questions for your tutor.
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Insert photos into your notes or share them with your tutor.
+        INFOPLIST_KEY_NSCameraUsageDescription: Scan worksheets, past papers and mark schemes into your notes.
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES

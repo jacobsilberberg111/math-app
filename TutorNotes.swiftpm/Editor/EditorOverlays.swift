@@ -48,7 +48,7 @@ struct QuickMenuView: View {
     @Bindable var model: EditorModel
     @EnvironmentObject var settings: AppSettings
 
-    static let actions: [TutorQuickAction] = [.check, .hint, .nextStep, .explain, .solve, .graphIt, .similar]
+    static let actions: [TutorQuickAction] = [.check, .hint, .nextStep, .explain, .solve, .graphIt, .similar, .flashcards]
 
     var body: some View {
         let tint = Color(hex: settings.tutorInkHex)

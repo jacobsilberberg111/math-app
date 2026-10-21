@@ -68,15 +68,26 @@ final class CanvasActionExecutor {
     }
 
     var settings: AppSettings { .shared }
-    var layout: LayoutAssistant { LayoutAssistant(doc: document) }
+    var layout: LayoutAssistant { LayoutAssistant(doc: document, frozenBounds: frozenArea) }
     var env: RenderEnvironment { PageRenderer.environment(for: document) }
     var pageWidth: CGFloat { document.pageSize.width }
     var pageHeight: CGFloat { document.pageSize.height }
     /// Where new things go by default and what they're kept inside: the page, or on a freeform
     /// board the student's view (extended downward).
-    var area: CGRect { document.tutorWorkArea }
+    var area: CGRect { frozenArea ?? document.tutorWorkArea }
+    /// On a board, the work area as it was when the turn began (see LayoutAssistant.frozenBounds).
+    private var frozenArea: CGRect?
 
-    func beginTurn() {
+    /// `focus` (document coordinates) is the region the turn is about, if any; on a board the
+    /// work area stretches to include it.
+    func beginTurn(focus: CGRect? = nil) {
+        if document.isFreeform {
+            var a = document.tutorWorkArea
+            if let focus, !a.contains(focus) { a = a.union(focus.insetBy(dx: -120, dy: -120)) }
+            frozenArea = a
+        } else {
+            frozenArea = nil
+        }
         turnRecord = TurnRecord()
         responseRecord = TurnRecord()
         liveElements.removeAll()
@@ -368,6 +379,10 @@ final class CanvasActionExecutor {
             case "focus": return try focus(args)
             case "clear_marks": return try clearMarks(args)
             case "remember": return try remember(args)
+            case "make_flashcards": return try makeFlashcards(args)
+            case "outline_paper": return try outlinePaper(args)
+            case "score_paper": return try scorePaper(args)
+            case "paper_summary": return try paperSummary(args)
             default:
                 return Outcome(result: "Unknown tool \(name).", isError: true, action: nil)
             }
@@ -791,9 +806,14 @@ final class CanvasActionExecutor {
                 markOrigin = CGPoint(x: answerArea.maxX - 58, y: answerArea.minY + 12)
             }
             noteModified(qe)
+            let firstMarking = q.status == .open
             q.status = verdict
             q.score = score ?? (verdict == .correct ? "\(q.marks)/\(q.marks)" : (verdict == .incorrect ? "0/\(q.marks)" : nil))
             q.feedback = comment
+            if firstMarking {
+                let earned = CanvasActionExecutor.earnedMarks(score: q.score, verdict: verdict, marks: q.marks)
+                StudyStore.shared.record(topic: q.topic, subjectID: document.meta.subjectID, earned: earned, possible: Double(max(1, q.marks)))
+            }
             let updated = q
             document.update(qe.id, actionName: "Mark") { $0.kind = .question(updated) }
             if comment != nil {
@@ -852,8 +872,10 @@ final class CanvasActionExecutor {
         noteModified(e)
         let requested = CGRect(x: x, y: y, width: e.frame.width, height: e.frame.height)
         // On a board anything on the board is fair game (it grows); pages keep things on the page.
+        let maxSide = NoteDocument.boardMaxSide
         let frame = document.isFreeform
-            ? requested.offsetBy(dx: max(0, 8 - requested.minX), dy: max(0, 8 - requested.minY))
+            ? CGRect(x: min(max(8, requested.minX), maxSide - requested.width - 8), y: min(max(8, requested.minY), maxSide - requested.height - 8),
+                     width: requested.width, height: requested.height)
             : layout.clamp(requested)
         document.update(id, actionName: "Move") {
             $0.pageIndex = page
@@ -988,6 +1010,198 @@ final class CanvasActionExecutor {
         }
         return Outcome(result: "Removed \(targets.count) of your marks\(page.map { " from page \($0 + 1)" } ?? "").", isError: false,
                        action: targets.isEmpty ? nil : ChatAction(symbol: "sparkles", summary: "Cleared \(targets.count) marks"))
+    }
+
+    /// Marks earned from a score like "3/4", else from the verdict.
+    static func earnedMarks(score: String?, verdict: QuestionStatus, marks: Int) -> Double {
+        if let score {
+            let parts = score.split(separator: "/").map { $0.trimmingCharacters(in: .whitespaces) }
+            if parts.count == 2, let a = Double(parts[0]) { return max(0, min(Double(marks), a)) }
+        }
+        switch verdict {
+        case .correct: return Double(marks)
+        case .partial: return Double(marks) / 2
+        default: return 0
+        }
+    }
+
+    // MARK: Flashcards
+
+    private func makeFlashcards(_ args: ToolArgs) throws -> Outcome {
+        let items = args.array("cards")
+        let cards = items.prefix(30).compactMap { c -> Flashcard? in
+            guard let front = c["front"]?.stringValue?.trimmed, !front.isEmpty,
+                  let back = c["back"]?.stringValue?.trimmed, !back.isEmpty else { return nil }
+            let topic = c["topic"]?.stringValue?.trimmed
+            return Flashcard(front: front, back: back, topic: topic?.isEmpty == false ? topic : nil, subjectID: document.meta.subjectID,
+                             noteID: document.id, noteTitle: document.meta.title)
+        }
+        guard !cards.isEmpty else { throw ToolInputError(message: "Give cards as [{front, back, topic}], each with a non-empty front and back.") }
+        let added = StudyStore.shared.add(cards)
+        let skipped = cards.count - added
+        return Outcome(result: "Added \(added) flashcard\(added == 1 ? "" : "s") to the deck" + (skipped > 0 ? " (\(skipped) already there)" : "") + "; they're due for review now.",
+                       isError: false, action: ChatAction(symbol: "rectangle.on.rectangle.angled", summary: "\(added) flashcard\(added == 1 ? "" : "s")"))
+    }
+
+    // MARK: Past papers
+
+    private func currentPaper() throws -> PaperSession {
+        guard let paper = document.content.paper else { throw ToolInputError(message: "This note isn't a past paper.") }
+        return paper
+    }
+
+    private func outlinePaper(_ args: ToolArgs) throws -> Outcome {
+        var paper = try currentPaper()
+        let pageCount = document.content.pages.count
+        let h = pageHeight
+        var qs: [PaperQuestion] = []
+        var seen = Set<String>()
+        for item in args.array("questions") {
+            guard var label = item["label"]?.stringValue?.trimmed, !label.isEmpty,
+                  let p = item["page"]?.intValue, p >= 1, p <= pageCount,
+                  let marks = item["marks"]?.intValue, marks > 0 else { continue }
+            if seen.contains(PaperSession.labelKey(label)) { label += " (\(qs.count + 1))" }
+            seen.insert(PaperSession.labelKey(label))
+            let y = min(max(0, CGFloat(item["y"]?.doubleValue ?? 40)), h - 40)
+            let topic = item["topic"]?.stringValue?.trimmed
+            qs.append(PaperQuestion(label: label, page: p - 1, top: y, bottom: h - 20, marks: min(marks, 100),
+                                    topic: topic?.isEmpty == false ? topic : nil))
+        }
+        guard !qs.isEmpty else {
+            throw ToolInputError(message: "No usable questions: each needs a label, a page from 1 to \(pageCount), and marks above 0.")
+        }
+        qs.sort { ($0.page, $0.top) < ($1.page, $1.top) }
+        for i in qs.indices {
+            if i + 1 < qs.count, qs[i + 1].page == qs[i].page {
+                qs[i].bottom = max(qs[i].top + 30, qs[i + 1].top - 6)
+            }
+            // Keep marks already given when the outline is corrected.
+            if let old = paper.index(of: qs[i].label) {
+                qs[i].awarded = paper.questions[old].awarded
+                qs[i].feedback = paper.questions[old].feedback
+                qs[i].markElementID = paper.questions[old].markElementID
+            }
+        }
+        paper.questions = qs
+        paper.outlined = true
+        document.content.paper = paper
+        document.markDirty()
+        return Outcome(result: "Outlined \(qs.count) question parts, \(paper.totalMarks) marks in total, across \(Set(qs.map(\.page)).count) page\(Set(qs.map(\.page)).count == 1 ? "" : "s").",
+                       isError: false, action: ChatAction(symbol: "list.bullet.rectangle", summary: "Mapped \(qs.count) questions"))
+    }
+
+    private func scorePaper(_ args: ToolArgs) throws -> Outcome {
+        var paper = try currentPaper()
+        let label = try args.requireString("label")
+        guard let i = paper.index(of: label) else {
+            throw ToolInputError(message: "No question \(label) in the outline. Questions: " + paper.questions.map(\.label).joined(separator: ", ") + ".")
+        }
+        guard let raw = args.int("awarded") else { throw ToolInputError(message: "Missing 'awarded'.") }
+        var q = paper.questions[i]
+        let awarded = max(0, min(q.marks, raw))
+        let firstTime = q.awarded == nil
+        // Re-marking replaces the earlier margin score.
+        if let old = q.markElementID, let e = document.element(old) {
+            noteRemoved(e)
+            document.remove(old, actionName: "Tutor")
+        }
+        let full = awarded == q.marks, none = awarded == 0
+        let purpose: InkPurpose = full ? .tick : (none ? .cross : .partial)
+        let hex = full ? InkPalette.named["green"]! : (none ? InkPalette.named["red"]! : InkPalette.named["orange"]!)
+        let origin = CGPoint(x: pageWidth - 100, y: q.top + 2)
+        let strokes = full ? HandDrawn.tick(at: origin, size: 26) : (none ? HandDrawn.cross(at: origin, size: 22) : HandDrawn.partial(at: origin, size: 26))
+        var ids: [String] = []
+        if let e = inkElement(page: q.page, strokes: strokes, colorHex: hex, width: 3, purpose: purpose, label: "\(awarded)/\(q.marks)") {
+            addInk(e)
+            ids.append(e.id)
+        }
+        q.awarded = awarded
+        q.feedback = args.string("feedback")
+        q.markElementID = ids.first
+        paper.questions[i] = q
+        document.content.paper = paper
+        document.markDirty()
+        if firstTime {
+            StudyStore.shared.record(topic: q.topic, subjectID: document.meta.subjectID, earned: Double(awarded), possible: Double(q.marks))
+        }
+        Haptics.success()
+        return Outcome(result: "\(q.label): \(awarded)/\(q.marks) recorded. Running total \(paper.awardedMarks)/\(paper.markedMarks) with \(paper.markedCount) of \(paper.questions.count) questions marked (\(paper.totalMarks) marks available).",
+                       isError: false,
+                       action: ChatAction(symbol: full ? "checkmark.circle.fill" : (none ? "xmark.circle.fill" : "circle.lefthalf.filled"),
+                                          summary: "\(q.label): \(awarded)/\(q.marks)", elementIDs: ids, page: q.page))
+    }
+
+    /// Writes a results page at the end of the note: score, time, summary, per-question table.
+    private func paperSummary(_ args: ToolArgs) throws -> Outcome {
+        var paper = try currentPaper()
+        let summary = try args.requireString("summary")
+        let strengths = args.array("strengths").compactMap { $0.stringValue?.trimmed }.filter { !$0.isEmpty }
+        let review = args.array("to_review").compactMap { $0.stringValue?.trimmed }.filter { !$0.isEmpty }
+        let next = args.string("next_steps")
+        document.appendPage(paper: PaperStyle(pattern: .blank, color: .white))
+        var page = document.content.pages.count - 1
+        let firstPage = page
+        let width = pageWidth - 112
+        let hex = settings.tutorInkHex
+        var ids: [String] = []
+        var y: CGFloat = 56
+
+        func text(_ s: String, style: TextStyle, size: CGFloat, color: String = hex, gap: CGFloat = 10) {
+            let t = TextContent(text: s, style: style, fontSize: size, colorHex: color, rich: true)
+            let h = ElementRenderer.measureText(t, author: .tutor, width: width, env: env).height
+            if y + h > pageHeight - 40 {
+                document.appendPage(paper: PaperStyle(pattern: .blank, color: .white))
+                page = document.content.pages.count - 1
+                y = 56
+            }
+            ids.append(addTutorElement(page: page, frame: CGRect(x: 56, y: y, width: width, height: h), kind: .text(t)).id)
+            y += h + gap
+        }
+
+        let total = paper.totalMarks, got = paper.awardedMarks
+        let pct = total > 0 ? Int((Double(got) / Double(total) * 100).rounded()) : 0
+        text("Results: \(got)/\(total) (\(pct)%)", style: .heading, size: 32, gap: 4)
+        var facts: [String] = []
+        if let start = paper.startedAt, let end = paper.finishedAt {
+            facts.append("Time: \(max(1, Int(end.timeIntervalSince(start) / 60))) min" + (paper.timeLimitMinutes.map { " of \($0)" } ?? ""))
+        }
+        facts.append("\(paper.markedCount) of \(paper.questions.count) questions marked")
+        text(facts.joined(separator: " · "), style: .note, size: 16, color: "#57606A", gap: 18)
+        text(summary, style: .handwriting, size: 20, gap: 18)
+        if !strengths.isEmpty { text("**Went well:** " + strengths.joined(separator: "; "), style: .handwriting, size: 19, color: InkPalette.named["green"]!) }
+        if !review.isEmpty { text("**To review:** " + review.joined(separator: "; "), style: .handwriting, size: 19, color: InkPalette.named["red"]!) }
+        if let next { text("**Next:** " + next, style: .handwriting, size: 19, gap: 22) }
+
+        // Per-question table, split into columns of up to 18 rows.
+        let rows = paper.questions.map { q in [q.label, q.awarded.map { "\($0)/\(q.marks)" } ?? "–/\(q.marks)", q.topic ?? ""] }
+        let chunks = stride(from: 0, to: rows.count, by: 18).map { Array(rows[$0..<min($0 + 18, rows.count)]) }
+        let columnWidth = (width - 20) / 2
+        var column = 0
+        var rowTop = y
+        for chunk in chunks {
+            let t = TableContent(rows: [["Question", "Marks", "Topic"]] + chunk, header: true, fontSize: 14)
+            let size = ElementRenderer.tableSize(t, maxWidth: columnWidth)
+            if rowTop + size.height > pageHeight - 40 {
+                document.appendPage(paper: PaperStyle(pattern: .blank, color: .white))
+                page = document.content.pages.count - 1
+                rowTop = 56
+                column = 0
+            }
+            let frame = CGRect(x: 56 + CGFloat(column) * (columnWidth + 20), y: rowTop, width: size.width, height: size.height)
+            ids.append(addTutorElement(page: page, frame: frame, kind: .table(t)).id)
+            column += 1
+            if column == 2 {
+                column = 0
+                rowTop += size.height + 20
+            }
+        }
+        paper.summary = summary
+        paper.resultsPage = firstPage
+        document.content.paper = paper
+        document.markDirty()
+        canvas?.scrollToPage(firstPage)
+        return Outcome(result: "Results written on page \(firstPage + 1): \(got)/\(total) (\(pct)%).", isError: false,
+                       action: ChatAction(symbol: "chart.bar.doc.horizontal", summary: "Results: \(got)/\(total)", elementIDs: ids, page: firstPage))
     }
 
     private func remember(_ args: ToolArgs) throws -> Outcome {

@@ -34,12 +34,19 @@ struct TutorContextBuilder {
         return pages.sorted()
     }
 
+    func pagesWithWork() -> [Int] {
+        let written = doc.content.pages.indices.filter { !doc.strokes(onPage: $0).isEmpty || doc.elements(onPage: $0).contains { !$0.isTutor } }
+        return Array((written.isEmpty ? [canvas?.currentPageIndex ?? 0] : written).prefix(24))
+    }
+
     /// Content blocks for a turn: snapshots, an optional sharper crop of the focus region, then
     /// the canvas description.
-    func blocks(focus: (page: Int, rect: CGRect)?, recentWriting: [CGRect], extraNotes: [String]) -> [JSONValue] {
+    /// With `allPages` (marking a whole paper) every page with the student's writing on it is
+    /// shown, up to 24, instead of just the ones on screen.
+    func blocks(focus: (page: Int, rect: CGRect)?, recentWriting: [CGRect], extraNotes: [String], allPages: Bool = false) -> [JSONValue] {
         if doc.isFreeform { return boardBlocks(focus: focus, recentWriting: recentWriting, extraNotes: extraNotes) }
         var out: [JSONValue] = []
-        let pages = pagesToShow(focusPage: focus?.page)
+        let pages = allPages ? pagesWithWork() : pagesToShow(focusPage: focus?.page)
         for p in pages {
             let focusRect = focus?.page == p ? focus?.rect : nil
             if let snap = PageRenderer.snapshot(doc, page: p, focus: focusRect) {
@@ -81,11 +88,7 @@ struct TutorContextBuilder {
     }
 
     /// The part of the board on screen (board coordinates).
-    var boardView: CGRect {
-        let board = CGRect(origin: .zero, size: doc.pageSize)
-        let v = (doc.visibleBoardRect ?? CGRect(x: 0, y: 0, width: 1000, height: 1200)).intersection(board)
-        return v.isNull || v.width < 50 || v.height < 50 ? CGRect(x: 0, y: 0, width: min(1000, board.width), height: min(1200, board.height)) : v
-    }
+    var boardView: CGRect { doc.boardViewRect }
 
     func canvasState(shownPages: [Int], focus: (page: Int, rect: CGRect)?, recentWriting: [CGRect], extraNotes: [String]) -> String {
         var s = "<canvas_state>\n"
@@ -130,12 +133,15 @@ struct TutorContextBuilder {
         }
         s += "</canvas_state>\n"
         let level = settings.studentLevel.trimmed, goals = settings.studentGoals.trimmed
-        if !level.isEmpty || !goals.isEmpty {
+        let weak = StudyStore.shared.weakTopicsLine
+        if !level.isEmpty || !goals.isEmpty || weak != nil {
             s += "<student>"
             if !level.isEmpty { s += "Level: \(level). " }
-            if !goals.isEmpty { s += "Goals: \(goals)" }
+            if !goals.isEmpty { s += "Goals: \(goals). " }
+            if let weak { s += "Recently found hard (share of marks): \(weak)." }
             s += "</student>\n"
         }
+        if let paper = doc.content.paper { s += paperState(paper) }
         let mem = memory.promptText
         if !mem.isEmpty { s += "<memory>\n\(mem)\n</memory>\n" }
         if !doc.content.attachments.isEmpty {
@@ -146,6 +152,23 @@ struct TutorContextBuilder {
         }
         s += "Date: \(Date().formatted(date: .abbreviated, time: .omitted))"
         return s
+    }
+
+    /// The past paper's questions as mapped, with marks so far.
+    func paperState(_ paper: PaperSession) -> String {
+        guard paper.outlined else { return "<past_paper>Not mapped yet.</past_paper>\n" }
+        var s = "<past_paper>"
+        if let limit = paper.timeLimitMinutes { s += "Timed: \(limit) min. " }
+        if paper.isRunning { s += "In progress (\(Int(paper.elapsed(at: Date()) / 60)) min so far). " }
+        if paper.finishedAt != nil { s += "Finished. " }
+        s += "\(paper.awardedMarks)/\(paper.markedMarks) on \(paper.markedCount) of \(paper.questions.count) questions marked; \(paper.totalMarks) marks in total.\n"
+        for q in paper.questions {
+            s += "  \(q.label): page \(q.page + 1) y\(Int(q.top))–\(Int(q.bottom)), \(q.marks) mark\(q.marks == 1 ? "" : "s")"
+            if let t = q.topic { s += ", \(t)" }
+            if let a = q.awarded { s += " — scored \(a)/\(q.marks)" }
+            s += "\n"
+        }
+        return s + "</past_paper>\n"
     }
 
     func summarizePage(_ p: Int) -> String {
@@ -171,7 +194,9 @@ struct TutorContextBuilder {
         }
         let bands = layout.freeBands(page: p)
         if !bands.isEmpty {
-            s += "  free full-width space: " + bands.map { "y\(Int($0.0))–\(Int($0.1))" }.joined(separator: ", ") + "\n"
+            let b = layout.bounds
+            s += (doc.isFreeform ? "  free space across x\(Int(b.minX))–\(Int(b.maxX)): " : "  free full-width space: ")
+                + bands.map { "y\(Int($0.0))–\(Int($0.1))" }.joined(separator: ", ") + "\n"
         }
         var els = doc.elements(onPage: p)
         var elsewhere = 0

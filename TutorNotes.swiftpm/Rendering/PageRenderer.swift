@@ -82,7 +82,7 @@ enum PageRenderer {
         let image = UIGraphicsImageRenderer(size: area.size, format: format).image { rc in
             let ctx = rc.cgContext
             ctx.translateBy(x: -area.minX, y: -area.minY)
-            drawPage(doc, page: index, ctx: ctx, inkScale: max(0.4, 1.5 * scale), env: env, patternAlpha: 0.55, region: region == nil ? nil : area)
+            drawPage(doc, page: index, ctx: ctx, inkScale: max(0.1, 1.5 * scale), env: env, patternAlpha: 0.55, region: region == nil ? nil : area)
             if grid { drawCoordinateGrid(in: area, ctx: ctx, labelScale: 1 / scale) }
             if let focus {
                 ctx.setStrokeColor(UIColor(hex: "#1C64F2").cgColor)
@@ -121,8 +121,10 @@ enum PageRenderer {
     /// are drawn thicker and sparser so they stay readable.
     static func drawCoordinateGrid(in rect: CGRect, ctx: CGContext, labelScale: CGFloat = 1) {
         let color = UIColor(red: 0.2, green: 0.45, blue: 0.95, alpha: 1)
-        let step: CGFloat = labelScale > 2.2 ? 100 : 50
-        let labelStep: CGFloat = step * 2
+        // Labels at least ~60 px apart in the final image: 100, 200, 400… points.
+        var labelStep: CGFloat = 100
+        while labelStep / labelScale < 60 { labelStep *= 2 }
+        let step = labelStep / 2
         ctx.saveGState()
         ctx.setStrokeColor(color.withAlphaComponent(0.10).cgColor)
         ctx.setLineWidth(0.5 * labelScale)
@@ -208,7 +210,7 @@ enum PageRenderer {
             // The region can run past the board's edge; fill it all with the paper first.
             PaperRenderer.drawBoard(paper, region: region, ctx: ctx)
             if !doc.content.pages.isEmpty {
-                drawPage(doc, page: 0, ctx: ctx, inkScale: max(0.5, scale * 2), env: env, region: region)
+                drawPage(doc, page: 0, ctx: ctx, inkScale: max(0.05, scale * 2), env: env, region: region)
             }
         }
     }
@@ -249,7 +251,7 @@ enum PageRenderer {
         let pageScale = min(1, 14_400 / max(region.width, region.height))
         let pageSize = CGSize(width: region.width * pageScale, height: region.height * pageScale)
         // Keep the ink bitmap to roughly 40 megapixels.
-        let inkScale = min(3, max(0.5, sqrt(40_000_000 / (region.width * region.height))))
+        let inkScale = min(3, max(0.1, sqrt(40_000_000 / (region.width * region.height))))
         let env = environment(for: doc)
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize))
         do {

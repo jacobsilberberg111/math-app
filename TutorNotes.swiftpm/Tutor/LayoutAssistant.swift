@@ -6,21 +6,31 @@ import PencilKit
 @MainActor
 struct LayoutAssistant {
     let doc: NoteDocument
+    /// A board's work area as it was when the tutor's turn began, so the student scrolling (or
+    /// the canvas following the tutor's pen) doesn't move where the rest of the turn lands.
+    var frozenBounds: CGRect? = nil
+
+    init(doc: NoteDocument, frozenBounds: CGRect? = nil) {
+        self.doc = doc
+        self.frozenBounds = frozenBounds
+    }
 
     var pageSize: CGSize { doc.pageSize }
 
-    /// Where things may go (page coordinates): the whole page, or on a freeform board the part the
-    /// student is looking at (extended downward).
-    var bounds: CGRect { doc.tutorWorkArea }
+    /// Where things go by default (page coordinates): the whole page, or on a freeform board the
+    /// part the student is looking at (extended downward).
+    var bounds: CGRect { frozenBounds ?? doc.tutorWorkArea }
 
-    /// On a board, only what's in or near the work area matters (a board can hold a lot).
-    private var relevantArea: CGRect? { doc.isFreeform ? bounds.insetBy(dx: -240, dy: -240) : nil }
+    /// On a board, only what's near the area of interest matters (a board can hold a lot).
+    private func relevantArea(near: CGRect?) -> CGRect? {
+        doc.isFreeform ? (near ?? bounds).insetBy(dx: -240, dy: -240) : nil
+    }
 
     /// Bounding boxes of the student's ink, merged into readable clusters (page coordinates).
-    func inkClusters(page: Int, gap: CGFloat = 14) -> [CGRect] {
+    func inkClusters(page: Int, gap: CGFloat = 14, near: CGRect? = nil) -> [CGRect] {
         let origin = doc.pageOrigin(page)
         var rects = doc.strokes(onPage: page).map { $0.renderBounds.offsetBy(dx: -origin.x, dy: -origin.y) }
-        if let area = relevantArea { rects = rects.filter { $0.intersects(area) } }
+        if let area = relevantArea(near: near) { rects = rects.filter { $0.intersects(area) } }
         let limit = doc.isFreeform ? CGSize(width: 2400, height: 2400) : pageSize
         rects = rects.filter { $0.width < limit.width * 1.5 && $0.height < limit.height * 1.5 }
         guard !rects.isEmpty else { return [] }
@@ -43,9 +53,9 @@ struct LayoutAssistant {
 
     /// With `answerAreasFree`, only a question card's prompt counts as taken: its answer area is
     /// where marks, hints and feedback belong (the student's ink in it is still counted).
-    func occupied(page: Int, excluding: Set<String> = [], answerAreasFree: Bool = false) -> [CGRect] {
-        var rects = inkClusters(page: page)
-        let area = relevantArea
+    func occupied(page: Int, excluding: Set<String> = [], answerAreasFree: Bool = false, near: CGRect? = nil) -> [CGRect] {
+        var rects = inkClusters(page: page, near: near)
+        let area = relevantArea(near: near)
         for e in doc.elements(onPage: page) where !excluding.contains(e.id) && (area == nil || e.frame.intersects(area!)) {
             switch e.kind {
             case .ink:
@@ -69,7 +79,10 @@ struct LayoutAssistant {
     }
 
     func clamp(_ r: CGRect) -> CGRect {
-        let b = bounds
+        // A board grows, so anything on it is fine; only keep clear of the top and left edges.
+        let b = doc.isFreeform
+            ? CGRect(x: 0, y: 0, width: max(r.maxX + 16, 400), height: NoteDocument.boardMaxSide)
+            : bounds
         var c = r
         c.size.width = min(c.width, b.width - 16)
         c.origin.x = max(b.minX + 8, min(c.minX, b.maxX - c.width - 8))
@@ -81,9 +94,11 @@ struct LayoutAssistant {
     /// position when nothing fits.
     func place(_ r: CGRect, page: Int, excluding: Set<String> = []) -> (rect: CGRect, nudged: Bool) {
         let rect = clamp(r)
-        let occ = occupied(page: page, excluding: excluding, answerAreasFree: true)
+        // On a board, search around the target (it may be outside the student's view, e.g. a
+        // comment next to an off-screen question).
+        let b = doc.isFreeform ? bounds.union(rect.insetBy(dx: -320, dy: -320)) : bounds
+        let occ = occupied(page: page, excluding: excluding, answerAreasFree: true, near: doc.isFreeform ? b : nil)
         if !collides(rect, with: occ) { return (rect, false) }
-        let b = bounds
         var dy: CGFloat = 12
         while rect.maxY + dy < b.maxY - 12 {
             let c = rect.offsetBy(dx: 0, dy: dy)

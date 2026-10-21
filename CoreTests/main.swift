@@ -177,5 +177,67 @@ if case .ellipse(_, let rx, let ry, _) = ShapeRecognizer.recognize(ell) {
     check(rx > 100 && ry < 70, "ellipse radii \(rx) \(ry)")
 } else { check(false, "ellipse not recognized \(String(describing: ShapeRecognizer.recognize(ell)))") }
 
+
+// MARK: Study core
+do {
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    let new = ReviewState(due: t0)
+    check(new.isNew && new.isDue(at: t0), "new card is due")
+    let again = new.reviewed(.again, now: t0)
+    check(approx(again.due.timeIntervalSince(t0), 600) && again.lapses == 0, "again on new: 10 min, no lapse")
+    let good1 = new.reviewed(.good, now: t0)
+    check(approx(good1.interval, 1) && good1.reps == 1, "first good: 1 day (\(good1.interval))")
+    let good2 = good1.reviewed(.good, now: good1.due)
+    check(approx(good2.interval, 3), "second good: 3 days (\(good2.interval))")
+    let good3 = good2.reviewed(.good, now: good2.due)
+    check(approx(good3.interval, 7.5), "third good: interval * ease (\(good3.interval))")
+    let lapse = good3.reviewed(.again, now: good3.due)
+    check(lapse.lapses == 1 && lapse.reps == 0 && approx(lapse.ease, 2.3), "lapse lowers ease, counts")
+    let easy = new.reviewed(.easy, now: t0)
+    check(approx(easy.interval, 4) && approx(easy.ease, 2.65), "easy on new: 4 days")
+    var s = new
+    for _ in 0..<20 { s = s.reviewed(.hard, now: s.due) }
+    check(s.ease >= ReviewState.minEase - 1e-9, "ease floor \(s.ease)")
+    var long = new
+    for _ in 0..<30 { long = long.reviewed(.easy, now: long.due) }
+    check(long.interval <= ReviewState.maxIntervalDays, "interval cap \(long.interval)")
+    check(ReviewState.shortInterval(600) == "10m" && ReviewState.shortInterval(6 * 3600) == "6h" && ReviewState.shortInterval(3 * 86400) == "3d",
+          "interval labels")
+    check(new.preview(.good, now: t0) == "1d", "preview \(new.preview(.good, now: t0))")
+
+    check(TopicStats.key("  Factorising. ") == "factorising", "topic key")
+    check(TopicStats.key("Completing-the square") == "completing the square", "topic key punctuation")
+    let day = 86_400.0
+    let attempts = [
+        TopicAttempt(topic: "Factorising", subjectID: nil, earned: 2, possible: 2, date: t0),
+        TopicAttempt(topic: "factorising", subjectID: nil, earned: 1, possible: 2, date: t0.addingTimeInterval(day)),
+        TopicAttempt(topic: "Completing the square", subjectID: nil, earned: 0, possible: 3, date: t0.addingTimeInterval(day)),
+        TopicAttempt(topic: "Completing the square", subjectID: nil, earned: 1, possible: 3, date: t0.addingTimeInterval(2 * day)),
+        TopicAttempt(topic: "Nothing", subjectID: nil, earned: 0, possible: 0, date: t0),
+    ]
+    let stats = TopicStats.summarize(attempts, now: t0.addingTimeInterval(2 * day))
+    check(stats.count == 2, "two topics (zero-mark attempts ignored): \(stats.count)")
+    let fac = stats.first { $0.key == "factorising" }
+    check(fac?.attempts == 2 && fac?.topic == "factorising" && fac.map { $0.score > 0.5 && $0.score < 1 } == true, "factorising stat \(String(describing: fac))")
+    let weak = TopicStats.weakest(stats)
+    check(weak.first?.key == "completing the square", "weakest first \(weak.map(\.key))")
+    let recent = TopicStats.summarize([TopicAttempt(topic: "a", subjectID: nil, earned: 0, possible: 1, date: t0),
+                                       TopicAttempt(topic: "a", subjectID: nil, earned: 1, possible: 1, date: t0.addingTimeInterval(42 * day))],
+                                      now: t0.addingTimeInterval(42 * day))
+    check(approx(recent[0].score, 0.8, 1e-6), "recency weighting: 6-week-old attempt counts a quarter (\(recent[0].score))")
+
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "UTC")!
+    let today = t0
+    let keys = Set((0..<3).map { StudyStreak.dayKey(today.addingTimeInterval(-Double($0) * day), calendar: cal) })
+    check(StudyStreak.current(days: keys, today: today, calendar: cal) == 3, "streak 3")
+    check(StudyStreak.current(days: keys, today: today.addingTimeInterval(day), calendar: cal) == 3, "streak holds until the day ends")
+    check(StudyStreak.current(days: keys, today: today.addingTimeInterval(2 * day), calendar: cal) == 0, "streak broken")
+    let log = [StudyStreak.dayKey(today, calendar: cal): 1800.0, StudyStreak.dayKey(today.addingTimeInterval(-3 * day), calendar: cal): 3600.0,
+               StudyStreak.dayKey(today.addingTimeInterval(-9 * day), calendar: cal): 999.0]
+    check(approx(StudyStreak.seconds(in: log, lastDays: 7, today: today, calendar: cal), 5400), "week seconds")
+    check(StudyStreak.duration(5400) == "1h 30m" && StudyStreak.duration(120) == "2m" && StudyStreak.duration(7200) == "2h", "durations")
+}
+
 print("passes: \(passes), failures: \(failures)")
 exit(failures == 0 ? 0 : 1)

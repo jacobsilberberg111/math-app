@@ -136,7 +136,7 @@ final class TutorEngine {
 
     // MARK: Public actions
 
-    func send(_ text: String, focus: (page: Int, rect: CGRect)? = nil, displayText: String? = nil) {
+    func send(_ text: String, focus: (page: Int, rect: CGRect)? = nil, displayText: String? = nil, allPages: Bool = false) {
         let trimmed = text.trimmed
         guard !trimmed.isEmpty else { return }
         guard settings.isTutorConfigured else {
@@ -159,7 +159,7 @@ final class TutorEngine {
         let notes = pendingNotes
         let builder = TutorContextBuilder(doc: document, canvas: canvas, memory: memory)
         let recent = recentWriting.filter { Date().timeIntervalSince($0.0) < 180 }.map(\.1)
-        content += builder.blocks(focus: focus, recentWriting: recent, extraNotes: notes)
+        content += builder.blocks(focus: focus, recentWriting: recent, extraNotes: notes, allPages: allPages)
         content.append(TutorContextBuilder.text(trimmed))
         pendingNotes.removeAll()
 
@@ -182,6 +182,33 @@ final class TutorEngine {
 
     func practice(_ request: PracticeRequest) {
         send(request.prompt, displayText: "Practice: \(request.count) × \(request.topic) (\(request.difficulty))")
+    }
+
+    // MARK: Past papers
+
+    /// Has the tutor read the paper and map its questions (once, when a past paper is opened).
+    func outlinePaper(again: Bool = false) {
+        guard let paper = document.content.paper, again || !paper.outlined, !isBusy else { return }
+        send(TutorPrompts.outlinePaper(pageCount: document.content.pages.count, pageSize: document.pageSize,
+                                       hasMarkScheme: document.content.attachments.contains { $0.role == .markScheme },
+                                       firstPaperPage: document.content.pages.firstIndex { $0.pdfAssetID != nil } ?? 0),
+             displayText: "Read through this paper")
+    }
+
+    /// Marks one question against the mark scheme, with the tutor looking at that question.
+    func markPaperQuestion(_ q: PaperQuestion) {
+        let rect = CGRect(x: 0, y: q.top, width: document.pageSize.width, height: max(40, q.bottom - q.top))
+        send(TutorPrompts.markPaperQuestion(q), focus: (q.page, rect), displayText: "Mark question \(q.label)")
+    }
+
+    /// Stops the clock and marks every answered question, then writes up the results.
+    func finishPaper() {
+        guard var paper = document.content.paper else { return }
+        if paper.startedAt == nil { paper.startedAt = Date() }
+        if paper.finishedAt == nil { paper.finishedAt = Date() }
+        document.content.paper = paper
+        document.markDirty()
+        send(TutorPrompts.finishPaper(paper), displayText: "I've finished: mark my paper", allPages: true)
     }
 
     func stop() {
@@ -242,7 +269,7 @@ final class TutorEngine {
         lastErrorRetryable = false
         statusText = "Looking at your page…"
         canvas?.setTutorActivity(focusDoc.map { .looking($0) } ?? .thinking(nil))
-        executor.beginTurn()
+        executor.beginTurn(focus: focusDoc)
         let generation = sessionGeneration
         let startCount = apiMessages.count
         if let userContent {
@@ -572,6 +599,10 @@ final class TutorEngine {
         case "mark": return "Marking…"
         case "focus": return "Pointing something out…"
         case "remember": return "Making a note about you…"
+        case "outline_paper": return "Reading the paper…"
+        case "score_paper": return "Marking against the scheme…"
+        case "paper_summary": return "Writing up your results…"
+        case "make_flashcards": return "Making flashcards…"
         default: return "Working on the page…"
         }
     }
@@ -582,7 +613,14 @@ final class TutorEngine {
         var out: [JSONValue] = []
         for a in items {
             if let block = attachmentBlock(a) {
-                out.append(TutorContextBuilder.text("Attached file: \(a.name)"))
+                switch a.role {
+                case .paper:
+                    out.append(TutorContextBuilder.text("The past paper the student is working through (its pages are this note's pages, in order): \(a.name)"))
+                case .markScheme:
+                    out.append(TutorContextBuilder.text("The mark scheme for this paper (\(a.name)). It is hidden from the student: use it to mark and to judge their working, and don't quote it or give answers from it unless they ask for a solution."))
+                case nil:
+                    out.append(TutorContextBuilder.text("Attached file: \(a.name)"))
+                }
                 out.append(block)
             } else {
                 // Don't let the tutor think it has a file it can't see.
@@ -696,7 +734,21 @@ final class TutorEngine {
         let attachment = TutorAttachment(id: id, name: name, kind: kind, mimeType: mime, localFile: local, sizeBytes: data.count)
         document.content.attachments.append(attachment)
         document.markDirty()
+        upload(attachment, data: data)
+    }
+
+    /// Uploads attachments that aren't on the Files API yet (added while offline, an upload that
+    /// failed, or files a past paper came with). Until then they're sent inline.
+    func uploadPendingAttachments() {
+        for a in document.content.attachments where a.remoteFileID == nil && !uploading.contains(a.id) {
+            guard let data = try? Data(contentsOf: document.assetURL(a.localFile)) else { continue }
+            upload(a, data: data)
+        }
+    }
+
+    private func upload(_ attachment: TutorAttachment, data: Data) {
         guard settings.isTutorConfigured else { return }
+        let id = attachment.id, name = attachment.name, mime = attachment.mimeType
         uploading.insert(id)
         let client = settings.makeClient()
         Task { [weak self] in
@@ -718,7 +770,10 @@ final class TutorEngine {
 
     func removeAttachment(_ a: TutorAttachment) {
         document.content.attachments.removeAll { $0.id == a.id }
-        try? FileManager.default.removeItem(at: document.assetURL(a.localFile))
+        // A past paper's attachment shares its file with the pages' PDF backgrounds.
+        if !document.content.pages.contains(where: { $0.pdfAssetID == a.localFile }) {
+            try? FileManager.default.removeItem(at: document.assetURL(a.localFile))
+        }
         document.markDirty()
         if session.sentAttachmentIDs.contains(a.id) {
             pendingNotes.append("The student removed the attachment \"\(a.name)\"; don't rely on it any more.")
@@ -807,7 +862,7 @@ final class TutorEngine {
         var messages: [JSONValue] = [["role": "user", "content": .array(content)]]
         // Observation runs in its own short exchange so it never interleaves with the chat history.
         let executor = observerExecutor
-        executor.beginTurn()
+        executor.beginTurn(focus: docRegion)
         var actions: [ChatAction] = []
         var text = ""
         do {

@@ -38,7 +38,14 @@ final class EditorModel: CanvasHost {
     var pendingFocus: (page: Int, rect: CGRect)?
     /// Asks a board's floating tutor bar to take keyboard focus (it resets this).
     var focusBoardBar = false
+    var showPaperQuestions = false
+    /// The note was opened with a job for the tutor, and it has been started.
+    @ObservationIgnored var handledStartRequest = false
     @ObservationIgnored private var toastTask: Task<Void, Never>?
+    /// Start of the stretch of study not yet added to the study log.
+    @ObservationIgnored private var studySince = Date()
+    /// Watching setting to restore after a timed paper (exam conditions switch it off).
+    @ObservationIgnored private var watchingBeforeExam: Bool?
 
     init(document: NoteDocument) {
         self.document = document
@@ -197,13 +204,92 @@ final class EditorModel: CanvasHost {
 
     // MARK: Lifecycle
 
+    // MARK: Study time
+
+    /// Counts time with the note open (paused while the app is in the background).
+    func pauseStudyClock() {
+        StudyStore.shared.logStudy(from: studySince, to: Date())
+        studySince = Date()
+    }
+
+    func resumeStudyClock() { studySince = Date() }
+
+    // MARK: Past papers
+
+    /// When a past paper opens: retry any file uploads, start an untimed paper's clock, and have
+    /// the tutor map the questions the first time (after the files have had a moment to upload).
+    func paperAppeared() {
+        tutor.uploadPendingAttachments()
+        guard var paper = document.content.paper else { return }
+        if paper.timeLimitMinutes == nil && paper.startedAt == nil {
+            paper.startedAt = Date()
+            document.content.paper = paper
+            document.markDirty()
+        }
+        guard !paper.outlined, AppSettings.shared.isTutorConfigured else { return }
+        Task { [weak self] in
+            for _ in 0..<40 {
+                guard let self, !self.tutor.uploading.isEmpty else { break }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            self?.tutor.outlinePaper()
+        }
+    }
+
+    /// A note with PDF pages (an imported worksheet or paper) can become a past paper.
+    var canPractiseAsPastPaper: Bool {
+        !document.isFreeform && document.content.paper == nil && document.content.pages.contains { $0.pdfAssetID != nil }
+    }
+
+    func practiseAsPastPaper() {
+        guard canPractiseAsPastPaper, let asset = document.content.pages.first(where: { $0.pdfAssetID != nil })?.pdfAssetID else { return }
+        if !document.content.attachments.contains(where: { $0.role == .paper }) {
+            let size = (try? FileManager.default.attributesOfItem(atPath: document.assetURL(asset).path)[.size] as? Int) ?? 0
+            document.content.attachments.append(TutorAttachment(id: "a\(UUID().uuidString.prefix(6))", name: "\(document.meta.title) (paper).pdf",
+                                                                kind: .pdf, mimeType: "application/pdf", localFile: asset, sizeBytes: size, role: .paper))
+        }
+        document.content.paper = PaperSession()
+        document.markDirty()
+        showPanelIfNoKey()
+        paperAppeared()
+    }
+
+    /// Starts a timed paper's clock under exam conditions: the tutor stops glancing at the work.
+    func startPaper() {
+        guard var paper = document.content.paper, paper.startedAt == nil else { return }
+        paper.startedAt = Date()
+        document.content.paper = paper
+        document.markDirty()
+        if paper.timeLimitMinutes != nil {
+            watchingBeforeExam = tutor.watching
+            tutor.watching = false
+            flash("Exam conditions: your tutor is on standby")
+        }
+    }
+
+    func finishPaper() {
+        if let before = watchingBeforeExam {
+            tutor.watching = before
+            watchingBeforeExam = nil
+        }
+        showPanelIfNoKey()
+        tutor.finishPaper()
+    }
+
     func close(library: LibraryStore) {
+        pauseStudyClock()
+        if let before = watchingBeforeExam { tutor.watching = before }
         audio.stopAll()
         tutor.shutdown()
         // Saving stamps modifiedAt, so only save real changes: opening a note to read it
         // shouldn't move it to the top of the library.
         let edited = document.revision > 0
-        if document.isDirty { document.saveNow() }
+        if document.isDirty {
+            document.saveNow()
+        } else if document.refreshMetaSummary() {
+            // Notes saved before newer meta fields existed (open questions, paper score).
+            library.persist(document.meta)
+        }
         library.update(document.meta)
         if edited || library.thumbnail(for: document.meta) == nil {
             library.setThumbnail(PageRenderer.thumbnail(document), for: document.id)

@@ -101,10 +101,7 @@ final class NoteDocument {
         // shouldn't reorder the library's "Date Modified" sort.
         if isDirty { meta.modifiedAt = Date() }
         isDirty = false
-        meta.pageCount = content.pages.count
-        meta.hasAudio = !content.recordings.isEmpty
-        meta.layout = content.layout
-        meta.openQuestions = content.elements.filter { if case .question(let q) = $0.kind { return q.status == .open }; return false }.count
+        refreshMetaSummary()
         let folder = self.folder
         let contentData = try? Storage.encoder.encode(content)
         let metaData = try? Storage.encoder.encode(meta)
@@ -116,6 +113,21 @@ final class NoteDocument {
             try? metaData?.write(to: folder.appendingPathComponent("meta.json"), options: .atomic)
         }
         onMetaChanged?(meta)
+    }
+
+    /// Recomputes the parts of the meta the library shows (page count, open questions, paper
+    /// score). Returns whether anything changed.
+    @discardableResult
+    func refreshMetaSummary() -> Bool {
+        let before = meta
+        meta.pageCount = content.pages.count
+        meta.hasAudio = !content.recordings.isEmpty
+        meta.layout = content.layout
+        meta.paperScore = content.paper.map { p in
+            p.markedCount > 0 ? "\(p.awardedMarks)/\(p.markedMarks)" : (p.totalMarks > 0 ? "\(p.totalMarks) marks" : "Past paper")
+        }
+        meta.openQuestions = content.elements.filter { if case .question(let q) = $0.kind { return q.status == .open }; return false }.count
+        return meta != before
     }
 
     // MARK: Geometry
@@ -195,11 +207,22 @@ final class NoteDocument {
     /// is looking at, extended downward so longer working still has room (the board grows to fit).
     var tutorWorkArea: CGRect {
         guard isFreeform else { return CGRect(origin: .zero, size: pageSize) }
-        let board = CGRect(origin: .zero, size: pageSize)
-        var v = visibleBoardRect ?? CGRect(x: 0, y: 0, width: 1000, height: 1200)
-        v = v.intersection(board)
-        if v.isNull || v.width < 200 || v.height < 200 { v = CGRect(x: 0, y: 0, width: min(1000, board.width), height: min(1200, board.height)) }
+        let v = boardViewRect
         return CGRect(x: v.minX, y: v.minY, width: v.width, height: min(NoteDocument.boardMaxSide - v.minY, v.height + 1400))
+    }
+
+    /// The part of the board the student is looking at, at least 600 pt square (zoomed right in,
+    /// the view itself is too small to work in) and kept on the board.
+    var boardViewRect: CGRect {
+        let board = CGRect(origin: .zero, size: pageSize)
+        var v = (visibleBoardRect ?? CGRect(x: 0, y: 0, width: 1000, height: 1200)).intersection(board)
+        if v.isNull { v = CGRect(x: 0, y: 0, width: 1000, height: 1200).intersection(board) }
+        let minSide: CGFloat = 600
+        if v.width < minSide { v = v.insetBy(dx: -(minSide - v.width) / 2, dy: 0) }
+        if v.height < minSide { v = v.insetBy(dx: 0, dy: -(minSide - v.height) / 2) }
+        v.origin.x = max(0, min(v.minX, board.width - v.width))
+        v.origin.y = max(0, min(v.minY, board.height - v.height))
+        return v.intersection(board)
     }
 
     func pagePoint(fromDoc p: CGPoint) -> (page: Int, point: CGPoint) {
@@ -244,8 +267,9 @@ final class NoteDocument {
 
     func add(_ element: CanvasElement, reveal: RevealStyle = .none, actionName: String? = nil) {
         content.elements.append(element)
-        canvas?.documentDidAddElement(element, reveal: reveal)
+        // Grow first, so the canvas can scroll to where the element lands.
         growBoardIfNeeded(toFit: [element.frame])
+        canvas?.documentDidAddElement(element, reveal: reveal)
         undoManager.registerUndo(withTarget: self) { doc in
             doc.remove(element.id, actionName: actionName)
         }
@@ -260,8 +284,8 @@ final class NoteDocument {
         change(&after)
         guard after != before else { return }
         content.elements[idx] = after
-        canvas?.documentDidUpdateElement(after)
         growBoardIfNeeded(toFit: [after.frame])
+        canvas?.documentDidUpdateElement(after)
         if registerUndo {
             undoManager.registerUndo(withTarget: self) { doc in
                 doc.update(id, actionName: actionName) { $0 = before }

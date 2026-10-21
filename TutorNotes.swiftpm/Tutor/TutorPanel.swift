@@ -11,6 +11,7 @@ struct TutorPanel: View {
     @State private var showPhotoPicker = false
     @State private var photoItem: PhotosPickerItem?
     @State private var showSettings = false
+    @State private var showScanner = false
     @FocusState private var composerFocused: Bool
 
     var tutor: TutorEngine { model.tutor }
@@ -61,6 +62,13 @@ struct TutorPanel: View {
             }
         }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .fullScreenCover(isPresented: $showScanner) {
+            DocumentScanner(onFinish: { images in
+                showScanner = false
+                if let url = DocumentScanner.pdf(from: images, name: "Scanned pages") { tutor.attachFile(url) }
+            }, onCancel: { showScanner = false })
+            .ignoresSafeArea()
+        }
     }
 
     // MARK: Header
@@ -272,6 +280,9 @@ struct TutorPanel: View {
                 Menu {
                     Button { showFileImporter = true } label: { Label("File (PDF, image, text)", systemImage: "doc") }
                     Button { showPhotoPicker = true } label: { Label("Photo", systemImage: "photo") }
+                    if DocumentScanner.isAvailable {
+                        Button { showScanner = true } label: { Label("Scan Document", systemImage: "doc.viewfinder") }
+                    }
                 } label: {
                     Image(systemName: "paperclip").font(.system(size: 17, weight: .medium)).frame(width: 34, height: 36)
                 }

@@ -62,7 +62,7 @@ struct TutorSessionFile: Codable {
 
 /// Quick actions offered on the canvas and in the panel.
 enum TutorQuickAction: String, CaseIterable, Identifiable {
-    case check, hint, nextStep, explain, solve, graphIt, similar, markAll, practice
+    case check, hint, nextStep, explain, solve, graphIt, similar, flashcards, markAll, practice
 
     var id: String { rawValue }
 
@@ -75,6 +75,7 @@ enum TutorQuickAction: String, CaseIterable, Identifiable {
         case .solve: return "Full solution"
         case .graphIt: return "Graph it"
         case .similar: return "Similar question"
+        case .flashcards: return "Flashcards"
         case .markAll: return "Mark my answers"
         case .practice: return "Practice"
         }
@@ -89,6 +90,7 @@ enum TutorQuickAction: String, CaseIterable, Identifiable {
         case .solve: return "list.number"
         case .graphIt: return "chart.xyaxis.line"
         case .similar: return "square.on.square"
+        case .flashcards: return "rectangle.on.rectangle.angled"
         case .markAll: return "checklist"
         case .practice: return "pencil.and.list.clipboard"
         }
@@ -112,6 +114,8 @@ enum TutorQuickAction: String, CaseIterable, Identifiable {
             return "Graph what's in \(target) on the page, with the key features labelled (intercepts, turning points, asymptotes as relevant)."
         case .similar:
             return "Give me a similar question to \(target) to try, as a question card with space to answer."
+        case .flashcards:
+            return "Turn \(target) into flashcards with make_flashcards: one fact, formula, method or common mistake per card, the front a short question and the back the answer (use $...$ for math). Make 3–8 good cards. Don't write on the page; just tell me in one line what you made."
         case .markAll:
             return "Mark all the questions I've answered. Tick or cross each one, give a score, and write brief feedback. Then tell me what to practise next."
         case .practice:

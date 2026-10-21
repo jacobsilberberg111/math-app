@@ -119,6 +119,34 @@ final class LibraryStore {
         return meta
     }
 
+    /// A note for working through a past paper: the paper's pages to write on, the paper and its
+    /// mark scheme attached for the tutor (the mark scheme stays hidden from the student), and a
+    /// paper session the tutor fills in by mapping the questions.
+    func createPastPaper(paper: URL, markScheme: URL?, title: String, subjectID: UUID?, timeLimitMinutes: Int?) -> NoteMeta? {
+        let meta = NoteMeta(title: title.trimmed.isEmpty ? "Past paper" : title.trimmed, subjectID: subjectID,
+                            paper: PaperStyle(pattern: .blank, color: .white))
+        let doc = NoteDocument.create(meta: meta, content: NoteContent())
+        guard let asset = doc.storePDF(from: paper), doc.pdf(asset) != nil else {
+            delete(meta)
+            return nil
+        }
+        doc.importPDFPages(assetID: asset, replaceFirstBlankPage: true)
+        func attach(_ file: String, name: String, role: AttachmentRole) {
+            let size = (try? FileManager.default.attributesOfItem(atPath: doc.assetURL(file).path)[.size] as? Int) ?? 0
+            doc.content.attachments.append(TutorAttachment(id: "a\(UUID().uuidString.prefix(6))", name: name, kind: .pdf,
+                                                           mimeType: "application/pdf", localFile: file, sizeBytes: size, role: role))
+        }
+        attach(asset, name: "\(meta.title) (paper).pdf", role: .paper)
+        if let markScheme, let ms = doc.storePDF(from: markScheme), doc.pdf(ms) != nil {
+            attach(ms, name: "\(meta.title) (mark scheme).pdf", role: .markScheme)
+        }
+        doc.content.paper = PaperSession(timeLimitMinutes: timeLimitMinutes)
+        doc.markDirty()
+        doc.saveNow()
+        notes.append(doc.meta)
+        return doc.meta
+    }
+
     /// Stamps when a note was opened (Home's "continue" and recents) without touching its
     /// modified date. Returns the updated meta to open the note with.
     @discardableResult

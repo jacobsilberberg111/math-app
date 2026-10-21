@@ -31,7 +31,8 @@ let package = Package(
             ],
             capabilities: [
                 .microphone(purposeString: "Record lectures alongside your notes and ask your tutor questions by voice."),
-                .speechRecognition(purposeString: "Turn what you say into questions for your tutor.")
+                .speechRecognition(purposeString: "Turn what you say into questions for your tutor."),
+                .camera(purposeString: "Scan worksheets, past papers and mark schemes into your notes.")
             ],
             appCategory: .education
         )

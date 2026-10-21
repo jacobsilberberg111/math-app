@@ -3,16 +3,23 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 /// Loads a note and shows the editor.
+/// Something for the tutor to start on as soon as the note opens.
+struct EditorStartRequest: Equatable {
+    var prompt: String
+    var displayText: String
+}
+
 struct NoteEditorContainer: View {
     let meta: NoteMeta
     /// Opens another note in place of this one (the editor has already closed this one).
     var onSwitchNote: ((NoteMeta) -> Void)?
+    var startRequest: EditorStartRequest?
     @State private var model: EditorModel?
 
     var body: some View {
         Group {
             if let model {
-                NoteEditorView(model: model, onSwitchNote: onSwitchNote)
+                NoteEditorView(model: model, onSwitchNote: onSwitchNote, startRequest: startRequest)
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -36,6 +43,7 @@ struct NoteEditorContainer: View {
 struct NoteEditorView: View {
     @Bindable var model: EditorModel
     var onSwitchNote: ((NoteMeta) -> Void)?
+    var startRequest: EditorStartRequest?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(LibraryStore.self) private var library
@@ -43,6 +51,7 @@ struct NoteEditorView: View {
     @State private var showPhotoPicker = false
     @State private var photoItem: PhotosPickerItem?
     @State private var showPDFImporter = false
+    @State private var showScanner = false
     @State private var exportItem: ExportItem?
 
     struct ExportItem: Identifiable {
@@ -53,9 +62,10 @@ struct NoteEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             EditorTopBar(model: model, onClose: close, onInsertPhoto: { showPhotoPicker = true },
-                         onImportPDF: { showPDFImporter = true }, onExport: export,
+                         onImportPDF: { showPDFImporter = true }, onExport: export, onScan: { showScanner = true },
                          onSwitchNote: onSwitchNote.map { open in { (meta: NoteMeta) in switchTo(meta, open) } })
             EditorToolStrip(model: model)
+            PaperBar(model: model)
             HStack(spacing: 0) {
                 canvasArea
                 TutorSidePanel(model: model)
@@ -66,9 +76,20 @@ struct NoteEditorView: View {
         .onAppear {
             model.document.onMetaChanged = { [weak library] meta in library?.update(meta) }
             DemoDirector.shared.editorAppeared(model)
+            model.resumeStudyClock()
+            model.paperAppeared()
+            if let startRequest, !model.handledStartRequest {
+                model.handledStartRequest = true
+                model.showPanelIfNoKey()
+                if settings.isTutorConfigured {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { model.showTutor = true }
+                }
+                model.tutor.send(startRequest.prompt, displayText: startRequest.displayText)
+            }
             if !settings.isTutorConfigured && !settings.hasSeenOnboarding { model.showTutor = true }
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.resumeStudyClock() } else { model.pauseStudyClock() }
             if phase != .active {
                 model.tutor.saveNow()
                 // Only when something changed: saving stamps the note's modified date.
@@ -109,6 +130,14 @@ struct NoteEditorView: View {
         .sheet(isPresented: $model.showPages) { PageNavigator(model: model) }
         .sheet(isPresented: $model.showPractice) { PracticeSheet(model: model) }
         .sheet(isPresented: $model.showPaper) { PaperPicker(model: model) }
+        .sheet(isPresented: $model.showPaperQuestions) { PaperQuestionsSheet(model: model) }
+        .fullScreenCover(isPresented: $showScanner) {
+            DocumentScanner(onFinish: { images in
+                showScanner = false
+                addScannedPages(images)
+            }, onCancel: { showScanner = false })
+            .ignoresSafeArea()
+        }
         .sheet(item: $exportItem) { item in ShareSheet(items: [item.url]) }
         .statusBarHidden(false)
     }
@@ -164,6 +193,20 @@ struct NoteEditorView: View {
             if onBoard { model.canvas?.scrollToReveal(docRect) } else { model.canvas?.scrollToPage(page) }
         }
         model.tutor.dismissSuggestion()
+    }
+
+    /// Scanned pages go after the note's pages, ready to write on.
+    private func addScannedPages(_ images: [UIImage]) {
+        guard let url = DocumentScanner.pdf(from: images, name: "Scan"),
+              let asset = model.document.storePDF(from: url) else {
+            model.flash("Couldn't add the scan")
+            return
+        }
+        model.document.importPDFPages(assetID: asset, replaceFirstBlankPage: true)
+        if let first = model.document.content.pages.firstIndex(where: { $0.pdfAssetID == asset }) {
+            model.canvas?.scrollToPage(first)
+        }
+        model.flash("Added \(images.count) page\(images.count == 1 ? "" : "s")")
     }
 
     private func export() {

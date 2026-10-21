@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 enum TutorPrompts {
     /// Fixed for every conversation so the prompt cache (tools + system) is shared across notes,
@@ -35,7 +36,43 @@ enum TutorPrompts {
     - Use at most two tool calls and only a few words. The observation says how involved the student wants you to be.
 
     Files the student attaches (PDFs, images, text) are reference material such as textbook pages, worksheets and mark schemes. Use them, and mention page numbers when helpful.
+
+    Past papers
+    Some notes are past papers: the pages are the exam paper and the student writes their answers on them. The paper and usually its mark scheme are attached; the mark scheme is hidden from the student. The canvas state lists the questions in <past_paper>.
+    - Mark strictly to the mark scheme (method marks, accuracy marks, follow-through), the way an examiner would. Without a mark scheme, mark as a careful examiner and say so.
+    - On the page, put a small tick where each mark is earned and a short note where one is lost, next to their working. Record each question's result with `score_paper`; it also writes the score in the margin.
+    - During a timed attempt don't help unless asked. Afterwards, be specific about what lost marks and what to practise.
+
+    Flashcards
+    `make_flashcards` adds cards to the student's spaced-repetition deck. Good cards test one thing: a definition, a formula, a method step, or a mistake they made. Keep fronts short and backs exact.
     """
+
+    static func outlinePaper(pageCount: Int, pageSize: CGSize, hasMarkScheme: Bool, firstPaperPage: Int = 0) -> String {
+        "[paper setup] This note is a past paper (\(pageCount) page\(pageCount == 1 ? "" : "s"), each \(Int(pageSize.width))×\(Int(pageSize.height)) pt"
+            + (firstPaperPage > 0 ? "; the paper's first page is the note's page \(firstPaperPage + 1), so give note page numbers" : "")
+            + "). Read the attached paper"
+            + (hasMarkScheme ? " and its mark scheme" : "")
+            + ", then call outline_paper once with every question part that earns marks, in order: its label as printed (e.g. \"3(b)(ii)\"), the page it starts on, the y on that page where it starts (page coordinates, estimate from the page images), its marks, and a short topic name. Don't write on the page. Then reply with one short, friendly line such as \"12 questions, 80 marks: start whenever you're ready.\""
+    }
+
+    static func markPaperQuestion(_ q: PaperQuestion) -> String {
+        "Mark question \(q.label) (\(q.marks) mark\(q.marks == 1 ? "" : "s"), page \(q.page + 1), outlined) against the mark scheme. Tick where marks are earned, note briefly where they're lost, and record it with score_paper. If I haven't answered it yet, don't mark it: just say so."
+    }
+
+    static func finishPaper(_ paper: PaperSession) -> String {
+        var s = "I've finished the paper"
+        if let start = paper.startedAt, let end = paper.finishedAt {
+            s += " (took \(Int(end.timeIntervalSince(start) / 60)) min"
+            if let limit = paper.timeLimitMinutes { s += " of \(limit)" }
+            s += ")"
+        }
+        let unmarked = paper.questions.filter { $0.awarded == nil }.map(\.label)
+        s += ". Mark every question I haven't had marked yet"
+        if !unmarked.isEmpty { s += " (\(unmarked.joined(separator: ", ")))" }
+        s += " against the mark scheme: ticks where marks are earned, a short note where they're lost, and score_paper for each one (0 for anything left blank). Then call paper_summary with my strengths, what to review, and the next steps."
+        return s
+    }
+
 
     static func observationPrompt(proactivity: Proactivity, region: String) -> String {
         let style: String

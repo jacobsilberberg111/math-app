@@ -352,7 +352,7 @@ final class DemoDirector {
         boardCanvas.setTutorActivity(.thinking(nil))
         await wait(1.6)
         await streamChat("Yes, that's right! The roots are x = −2 and x = −3. I've sketched it so you can see them.", into: boardReply, model: board)
-        await tool("mark", #"{"page": 1, "verdict": "correct", "x": 540, "y": 236, "comment": "Spot on"}"#, model: board, replyID: boardReply)
+        await tool("mark", #"{"page": 1, "verdict": "correct", "x": 540, "y": 236}"#, model: board, replyID: boardReply)
         await tool("write", #"{"page": 1, "x": 120, "y": 335, "width": 470, "text": "So $x = -2$ or $x = -3$. Both are negative because $+5x$ and $+6$ are positive."}"#, model: board, replyID: boardReply)
         await tool("graph", #"{"page": 1, "x": 650, "y": 130, "width": 330, "height": 300, "x_min": -5, "x_max": 1, "y_min": -1, "y_max": 6, "functions": [{"expression": "x^2 + 5x + 6", "label": "$y = x^2 + 5x + 6$"}], "points": [{"x": -2, "y": 0, "label": "(−2, 0)", "color": "red"}, {"x": -3, "y": 0, "label": "(−3, 0)", "color": "red"}]}"#, model: board, replyID: boardReply)
         endTutorTurn(board, replyID: boardReply)

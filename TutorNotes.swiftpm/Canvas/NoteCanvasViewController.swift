@@ -342,7 +342,15 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         let t = NoteCanvasViewController.boardTileSize
         let margin = max(t / 2, 300 / max(zoom, 0.05))
         let want = visibleDocRect.insetBy(dx: -margin, dy: -margin).intersection(board)
-        let paper = document.content.pages.first?.paper ?? .standard
+        var paper = document.content.pages.first?.paper ?? .standard
+        // Zoomed far out, fine patterns are a blur of thousands of shapes per tile: draw lighter ones.
+        if zoom < 0.3 {
+            switch paper.pattern {
+            case .dots: paper.pattern = .blank
+            case .smallGrid, .graph: paper.pattern = .grid
+            default: break
+            }
+        }
         var keep = Set<Int>()
         if !want.isNull, want.width > 1, want.height > 1 {
             let c0 = Int(floor(want.minX / t)), c1 = Int(floor((want.maxX - 0.5) / t))

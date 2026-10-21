@@ -22,6 +22,8 @@ struct NoteMeta: Codable, Identifiable, Equatable {
     var lastOpenedAt: Date?
     /// Question cards still waiting for an answer, counted when the note was last saved.
     var openQuestions: Int?
+    /// Past papers: "52/80" once marking has started, or "80 marks" before.
+    var paperScore: String?
 
     init(id: UUID = UUID(), title: String, subjectID: UUID? = nil, paper: PaperStyle? = nil) {
         self.id = id
@@ -37,6 +39,7 @@ struct NoteMeta: Codable, Identifiable, Equatable {
     }
 
     var isFreeform: Bool { layout == .freeform }
+    var isPastPaper: Bool { paperScore != nil }
 
     /// When the note was last opened or edited, whichever is later (for "recent" lists).
     var lastActivity: Date { max(lastOpenedAt ?? .distantPast, modifiedAt) }
@@ -157,6 +160,77 @@ struct NoteContent: Codable {
     var recordings: [AudioRecording] = []
     var nextElementNumber: Int = 1
     var nextQuestionNumber: Int = 1
+    /// Set when the note is a past paper being worked through.
+    var paper: PaperSession?
+}
+
+// MARK: - Past papers
+
+/// A past paper being worked through: its questions (mapped by the tutor from the paper), the
+/// timer, and the marks awarded against the mark scheme.
+struct PaperSession: Codable, Equatable {
+    var questions: [PaperQuestion] = []
+    /// The tutor has read the paper and mapped its questions.
+    var outlined = false
+    /// nil means untimed.
+    var timeLimitMinutes: Int?
+    var startedAt: Date?
+    var finishedAt: Date?
+    var summary: String?
+    var resultsPage: Int?
+
+    var totalMarks: Int { questions.reduce(0) { $0 + $1.marks } }
+    var awardedMarks: Int { questions.compactMap(\.awarded).reduce(0, +) }
+    /// Marks available in the questions marked so far.
+    var markedMarks: Int { questions.filter { $0.awarded != nil }.reduce(0) { $0 + $1.marks } }
+    var markedCount: Int { questions.filter { $0.awarded != nil }.count }
+    var isRunning: Bool { startedAt != nil && finishedAt == nil }
+
+    func elapsed(at now: Date) -> TimeInterval {
+        guard let start = startedAt else { return 0 }
+        return max(0, (finishedAt ?? now).timeIntervalSince(start))
+    }
+
+    /// Seconds left on a timed paper (negative once over time); nil when untimed or not started.
+    func remaining(at now: Date) -> TimeInterval? {
+        guard let limit = timeLimitMinutes, startedAt != nil else { return nil }
+        return Double(limit * 60) - elapsed(at: now)
+    }
+
+    /// Matches printed labels loosely: "3(b)(ii)", "3b ii" and "Q3bii" are the same question.
+    static func labelKey(_ label: String) -> String {
+        var k = label.lowercased().filter { $0.isLetter || $0.isNumber }
+        if k.hasPrefix("q"), k.dropFirst().first?.isNumber == true { k.removeFirst() }
+        return k
+    }
+
+    func index(of label: String) -> Int? {
+        let key = PaperSession.labelKey(label)
+        return questions.firstIndex { PaperSession.labelKey($0.label) == key }
+    }
+
+    /// The question at a point on a page: the one whose span contains it, else the nearest above.
+    func question(page: Int, y: CGFloat) -> PaperQuestion? {
+        let onPage = questions.filter { $0.page == page }
+        if let hit = onPage.first(where: { y >= $0.top && y <= $0.bottom }) { return hit }
+        return onPage.filter { $0.top <= y }.max { $0.top < $1.top } ?? onPage.first
+    }
+}
+
+struct PaperQuestion: Codable, Equatable, Identifiable {
+    var id: String { label }
+    /// As printed on the paper, e.g. "3(b)(ii)".
+    var label: String
+    /// 0-based page and the vertical span (page coordinates) of the question and its answer space.
+    var page: Int
+    var top: CGFloat
+    var bottom: CGFloat
+    var marks: Int
+    var topic: String?
+    var awarded: Int?
+    var feedback: String?
+    /// The score mark drawn in the margin, replaced if the question is re-marked.
+    var markElementID: String?
 }
 
 struct CanvasElement: Codable, Identifiable, Equatable {
@@ -384,6 +458,15 @@ struct TutorAttachment: Codable, Identifiable, Equatable {
     var addedAt: Date = Date()
     /// Anthropic Files API id once uploaded.
     var remoteFileID: String?
+    /// nil for ordinary reference files.
+    var role: AttachmentRole?
+}
+
+enum AttachmentRole: String, Codable {
+    /// The past paper the note's pages come from.
+    case paper
+    /// The paper's mark scheme: used for marking, hidden from the student.
+    case markScheme
 }
 
 struct AudioRecording: Codable, Identifiable, Equatable {
