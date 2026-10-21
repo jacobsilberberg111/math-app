@@ -12,15 +12,15 @@ final class DemoDirector {
 
     static var arguments: [String] { ProcessInfo.processInfo.arguments }
     static var isDemo: Bool { arguments.contains("-demo-script") }
-    static var skipOnboarding: Bool { isDemo || arguments.contains("-uitest-skip-onboarding") }
+    static var skipOnboarding: Bool { isDemo || FeatureCheck.isOn || arguments.contains("-uitest-skip-onboarding") }
     static var openFirstNote: Bool { arguments.contains("-uitest-open-first-note") }
     static var showTutorPanel: Bool { arguments.contains("-uitest-show-tutor") }
 
-    private var openNote: ((NoteMeta) -> Void)?
+    var openNote: ((NoteMeta) -> Void)?
     private var closeNote: (() -> Void)?
     private var newBoard: ((String) -> Void)?
     private var showFlashcards: ((Bool) -> Void)?
-    private weak var library: LibraryStore?
+    weak var library: LibraryStore?
     private var started = false
     private var editor: EditorModel?
     private var editorContinuation: CheckedContinuation<EditorModel, Never>?
@@ -44,6 +44,9 @@ final class DemoDirector {
             settings.serverURL = "demo.invalid"
             settings.serverToken = "demo"
             Task { await run() }
+        } else if FeatureCheck.isOn, !started {
+            started = true
+            Task { await runFeatureCheck() }
         } else if DemoDirector.openFirstNote, !started {
             started = true
             Task { await openWelcomeNote() }
@@ -89,16 +92,16 @@ final class DemoDirector {
 
     // MARK: Helpers
 
-    private func wait(_ seconds: Double) async {
+    func wait(_ seconds: Double) async {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
-    private func waitForEditor() async -> EditorModel {
+    func waitForEditor() async -> EditorModel {
         if let editor { return editor }
         return await withCheckedContinuation { c in editorContinuation = c }
     }
 
-    private func waitForCanvas(_ model: EditorModel) async -> NoteCanvasViewController? {
+    func waitForCanvas(_ model: EditorModel) async -> NoteCanvasViewController? {
         for _ in 0..<50 {
             if let c = model.canvas, c.isViewLoaded, c.view.window != nil { return c }
             await wait(0.1)
@@ -114,7 +117,7 @@ final class DemoDirector {
     }
 
     /// Writes text as animated pen strokes, stroke by stroke.
-    private func handwrite(_ text: String, at docOrigin: CGPoint, size: CGFloat, color: UIColor, width: CGFloat,
+    func handwrite(_ text: String, at docOrigin: CGPoint, size: CGFloat, color: UIColor, width: CGFloat,
                            canvas: NoteCanvasViewController, speed: Double = 1) async {
         let strokes = Handwriting.strokes(text, origin: docOrigin, size: size, seed: text.count * 31 + Int(docOrigin.y))
         for pts in strokes where !pts.isEmpty {

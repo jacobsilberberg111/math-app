@@ -74,6 +74,21 @@ jobs:
           APP=$(find build/sim/Build/Products/Debug-iphonesimulator -maxdepth 1 -name "*.app" | head -1)
           xcrun simctl install "$DEVICE" "$APP"
 
+      - name: Feature check
+        run: |
+          # Drives the lasso, ink conversion, find, page, export and colour features on a fresh
+          # note in the simulator and fails the job if any check fails or the app doesn't finish.
+          mkdir -p feature-check
+          xcrun simctl launch --console-pty "$DEVICE" com.jacobsilberberg.margin -feature-check > feature-check/app-log.txt 2>&1 &
+          for i in $(seq 1 240); do
+            if grep -q "FEATURE_CHECK_DONE" feature-check/app-log.txt 2>/dev/null; then echo "finished after ${i}s"; break; fi
+            sleep 1
+          done
+          xcrun simctl io "$DEVICE" screenshot feature-check/final.png || true
+          xcrun simctl terminate "$DEVICE" com.jacobsilberberg.margin || true
+          grep "CHECK" feature-check/app-log.txt || tail -60 feature-check/app-log.txt
+          grep -q "FEATURE_CHECK_DONE failures=0" feature-check/app-log.txt
+
       - name: Screenshots
         continue-on-error: true
         run: |
@@ -119,6 +134,13 @@ jobs:
           ls -la video
           grep "DEMO:" video/app-log.txt || true
           tail -40 video/app-log.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: feature-check
+          path: feature-check
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         if: always()
