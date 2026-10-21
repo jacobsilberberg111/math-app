@@ -59,6 +59,7 @@ final class EditorModel: CanvasHost {
         self.document = document
         self.tutor = TutorEngine(document: document)
         self.audio = AudioController(document: document)
+        observePageChanges()
     }
 
     var pageCount: Int { document.content.pages.count }

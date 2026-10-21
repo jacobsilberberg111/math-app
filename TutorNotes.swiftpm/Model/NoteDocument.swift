@@ -19,6 +19,8 @@ protocol DocumentCanvas: AnyObject {
     func documentDidRemoveElement(id: String)
     func documentDidChangePages()
     func documentDidReplaceDrawing()
+    /// Pages, elements and ink were all replaced at once (page move, resize, clear, or their undo).
+    func documentDidReload()
 }
 
 /// The open note: pages, ink, elements, assets. All mutations go through here so they can be
@@ -43,6 +45,9 @@ final class NoteDocument {
     @ObservationIgnored let undoManager = UndoManager()
     @ObservationIgnored weak var canvas: DocumentCanvas?
     @ObservationIgnored var onMetaChanged: ((NoteMeta) -> Void)?
+    /// Called when pages are moved or resized (including by undo and redo) so page numbers kept
+    /// elsewhere can follow.
+    @ObservationIgnored var onPagesRearranged: ((PageRemap) -> Void)?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var imageCache: [String: UIImage] = [:]
     @ObservationIgnored private var pdfCache: [String: CGPDFDocument] = [:]

@@ -29,7 +29,7 @@ enum TutorTools {
     }
 
     static let page = prop("integer", "Page number (1-based). Use pages.count + 1 to start a new page. Freeform boards have only page 1.")
-    static let x = prop("number", "Left edge in page points (0–816 on pages; board coordinates on a freeform board).")
+    static let x = prop("number", "Left edge in page points (0 to the page width on pages; board coordinates on a freeform board).")
     static let y = prop("number", "Top edge in page points (0 at the top of the page).")
     static let color: JSONValue = ["type": "string", "enum": colorEnum, "description": "Ink colour."]
 

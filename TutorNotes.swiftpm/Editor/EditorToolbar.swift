@@ -18,6 +18,7 @@ struct EditorTopBar: View {
     @Environment(LibraryStore.self) private var library
     @State private var editingTitle = false
     @State private var titleDraft = ""
+    @State private var clearingPage: Int?
     @FocusState private var titleFocused: Bool
 
     /// Narrow windows fold Pages and Export into the insert menu so the bar still fits.
@@ -116,6 +117,7 @@ struct EditorTopBar: View {
                         Divider()
                         Button { model.document.appendPage(); model.canvas?.scrollToPage(model.pageCount - 1) } label: { Label("New Page", systemImage: "doc.badge.plus") }
                         Button { model.showPaper = true } label: { Label("Paper Style", systemImage: "square.grid.3x3") }
+                        Button(role: .destructive) { clearingPage = model.currentPage } label: { Label("Clear This Page", systemImage: "eraser") }
                     }
                     if compact {
                         Divider()
@@ -142,6 +144,7 @@ struct EditorTopBar: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(.bar)
+        .clearPageDialog(model: model, page: $clearingPage)
     }
 
     private func commitTitle() {

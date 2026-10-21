@@ -54,7 +54,7 @@ final class TutorEngine {
     @ObservationIgnored let observerExecutor: CanvasActionExecutor
     @ObservationIgnored private var apiMessages: [JSONValue] = []
     @ObservationIgnored private var session = TutorSessionFile()
-    @ObservationIgnored private var turnRecords: [UUID: TurnRecord] = [:]
+    @ObservationIgnored var turnRecords: [UUID: TurnRecord] = [:]
     @ObservationIgnored private var currentTask: Task<Void, Never>?
     @ObservationIgnored private var observerTask: Task<Void, Never>?
     @ObservationIgnored private var glanceTimer: Task<Void, Never>?

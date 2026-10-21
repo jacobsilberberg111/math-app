@@ -216,6 +216,7 @@ struct PaperPicker: View {
     @State private var pattern: PaperPattern = .ruled
     @State private var color: PaperColor = .white
     @State private var applyToAll = true
+    @State private var pageSize: PageSize = .letter
 
     var body: some View {
         NavigationStack {
@@ -255,6 +256,7 @@ struct PaperPicker: View {
                 Section {
                     Toggle("Apply to all pages", isOn: $applyToAll)
                 }
+                PageSizeSection(document: model.document, selection: $pageSize)
             }
             .navigationTitle("Paper")
             .navigationBarTitleDisplayMode(.inline)
@@ -263,6 +265,7 @@ struct PaperPicker: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Apply") {
                         model.document.setPaper(PaperStyle(pattern: pattern, color: color), forPage: applyToAll ? nil : model.currentPage)
+                        if pageSize != model.document.content.pageSize { model.setPageSize(pageSize) }
                         dismiss()
                     }
                 }
@@ -271,6 +274,7 @@ struct PaperPicker: View {
                 let current = model.document.content.pages[safe: model.currentPage]?.paper ?? .standard
                 pattern = current.pattern
                 color = current.color
+                pageSize = model.document.content.pageSize
             }
         }
     }
