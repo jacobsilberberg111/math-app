@@ -107,6 +107,9 @@ struct EditorTopBar: View {
                         Button { onScan() } label: { Label("Scan Pages", systemImage: "doc.viewfinder") }
                     }
                     Button { model.selectTool(.text) } label: { Label("Text Box", systemImage: "textformat") }
+                    if CanvasClip.pasteboardHasContent {
+                        Button { model.canvas?.pasteFromClipboard(at: nil) } label: { Label("Paste", systemImage: "doc.on.clipboard") }
+                    }
                     Divider()
                     Button {
                         model.showPanelIfNoKey()
@@ -483,7 +486,7 @@ struct EditorToolStrip: View {
                 }
             }
         case .lasso:
-            hint("Circle ink to select it, then drag to move or tap for options")
+            hint("Circle ink or items to select · drag to move · handles resize and rotate")
         case .select:
             hint("Tap anything to select it · drag to move · long-press works in any tool")
         case .tutor:

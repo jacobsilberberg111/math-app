@@ -148,6 +148,9 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         if let tv = editingTextView, v.isDescendant(of: tv) { return false }
         if v.isDescendant(of: selectionView.actionBar) { return false }
         if v.isDescendant(of: shapeBar) { return false }
+        // Touches on the lasso's box, handles and bar belong to it, not to the canvas's own gestures.
+        if let box = lasso.view, v.isDescendant(of: box),
+           gestureRecognizer === tapGesture || gestureRecognizer === lasso.gesture || gestureRecognizer === longPress { return false }
         return true
     }
 
@@ -240,6 +243,8 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
             } else {
                 select(nil)
             }
+        case .lasso:
+            handleLassoTap(at: docPoint)
         case .tutor:
             // A tap asks about whatever is around that point.
             let (page, p) = document.pagePoint(fromDoc: docPoint)
@@ -337,6 +342,8 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
 
     func select(_ id: String?) {
         if editingTextView != nil && id != nil { endTextEditing() }
+        // An item selected here and a lasso selection never show together.
+        if id != nil { clearLassoSelection() }
         selectedElementID = id
         guard let id, let e = document.element(id) else {
             selectionView.isHidden = true

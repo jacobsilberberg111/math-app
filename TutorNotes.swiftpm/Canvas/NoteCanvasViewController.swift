@@ -68,6 +68,9 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     var scrollingBlockedForPalm = false
     var scrollBeforeFingers: (offset: CGPoint, zoom: CGFloat, date: Date)?
 
+    // Lasso tool (see +Lasso)
+    let lasso = LassoState()
+
     // Snapped-shape resizing (see +Shapes)
     let shapeBar = ShapeBarView()
     var editableShape: EditableShape?
@@ -237,6 +240,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         regionLayer.lineWidth = 2 / z
         layoutFindHighlights()
         layoutShapeBar()
+        layoutLasso()
         if document.isFreeform { updateZoomLimits() }
         updateVisiblePages()
     }
@@ -273,6 +277,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === canvasView else { return }
         updateVisiblePages()
+        layoutLasso()
         let page = currentPageIndex
         if page != lastReportedPage {
             lastReportedPage = page
@@ -510,6 +515,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             selectionView.frame = document.docRect(for: element).insetBy(dx: -4, dy: -4)
             selectionView.configure(for: element, zoom: zoom)
         }
+        lassoUpdatedElement(element.id)
     }
 
     func documentDidRemoveElement(id: String) {
@@ -517,6 +523,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         elementViews[id] = nil
         revealQueue.removeAll { $0.elementID == id }
         if selectedElementID == id { select(nil) }
+        lassoDroppedElement(id)
     }
 
     func documentDidChangePages() {
@@ -526,6 +533,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     }
 
     func documentDidReplaceDrawing() {
+        // Selected strokes are tracked by index, so any outside change to the ink ends the selection.
+        if !lasso.isCommitting { clearLassoSelection() }
         if replayTime != nil {
             // Mid-replay: re-render the replay from the new ink (the canvas shows a faded copy).
             replaySourceDrawing = document.drawing
@@ -554,14 +563,16 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             if newTool.kind != .text { endTextEditing() }
             if newTool.kind != .select { select(nil) }
             if newTool.kind != .tutor { clearRegion() }
+            if newTool.kind != .lasso { clearLassoSelection() }
         }
         tool = newTool
         canvasView.tool = newTool.pkTool()
         applyDrawingPolicy()
         canvasView.isRulerActive = newTool.rulerActive
         canvasView.drawingGestureRecognizer.isEnabled = newTool.kind.usesPencilKit && replayTime == nil
-        // In region-select mode one finger draws the region; scroll with two.
-        canvasView.panGestureRecognizer.minimumNumberOfTouches = newTool.kind == .tutor ? 2 : 1
+        // In region-select mode one finger draws the region; scroll with two. Same for a lasso drawn with fingers.
+        canvasView.panGestureRecognizer.minimumNumberOfTouches = newTool.kind == .tutor || (newTool.kind == .lasso && newTool.fingerDrawing) ? 2 : 1
+        configureLasso(for: newTool)
         regionPan?.isEnabled = newTool.kind == .tutor
         strokeObserver?.acceptsFinger = newTool.fingerDrawing
         strokeObserver?.isEnabled = newTool.shapeRecognition && (newTool.kind == .pen || newTool.kind == .highlighter) && replayTime == nil

@@ -193,6 +193,7 @@ extension NoteCanvasViewController {
             replaySourceDrawing = document.drawing
             endTextEditing()
             select(nil)
+            clearLassoSelection()
         }
         replayTime = time
         canvasView.drawingGestureRecognizer.isEnabled = false
