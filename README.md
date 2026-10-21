@@ -16,7 +16,23 @@ You need an iPad on iPadOS 17 or later, an Apple Pencil, and an [Anthropic API k
 1. Open `TutorNotes.swiftpm` in Xcode 16 or later.
 2. Select your iPad as the run destination, choose your team under Signing (Playgrounds-style packages show it in the app settings), and run.
 
-On first launch, paste your API key. It's stored in the Keychain and only ever sent to `api.anthropic.com`.
+On first launch, connect the tutor: either your **tutor server** (recommended, see below) or your own API key.
+
+## Deploy the tutor server on Railway
+
+The `server/` folder is a small relay that keeps your Claude API key on the server. The app only holds an access token for it.
+
+1. In Railway, create a project, choose **Deploy from GitHub repo**, and pick this repo. Railway builds the root `Dockerfile` and uses `railway.json`, which sets the health check to `/health`.
+2. Under **Variables**, add:
+   - `ANTHROPIC_API_KEY`: your Claude API key.
+   - `APP_TOKEN`: a long random secret, for example the output of `openssl rand -hex 32`.
+   - Optional: `ALLOWED_MODELS`, such as `claude-sonnet-5-5,claude-haiku-5-5`, to limit which models the app can use.
+   - Optional: `RATE_LIMIT_PER_MINUTE` (default 60) and `MAX_BODY_MB` (default 40).
+3. Under **Networking**, generate a public domain, such as `tutor-notes-production.up.railway.app`.
+4. Open `https://<your-domain>/health`. It should show `"configured": true`.
+5. In the app, go to **Settings → Claude connection → Tutor server**. Enter the domain and the same `APP_TOKEN`, then tap **Test connection**.
+
+The server streams responses straight through, relays file uploads, cancels Claude requests when you press Stop, and rejects anything without the token. Run its tests with `cd server && npm test`; they use a mock of the Claude API, so no key is needed.
 
 ## The notes side
 
@@ -81,7 +97,11 @@ TutorNotes.swiftpm/
   Tutor/                     Claude client, tools, executor, context, engine, chat panel
   Editor/                    Editor screen, toolbar, overlays, pages, practice, audio
   Library/                   Library and settings screens
+  Demo/                      Scripted walkthrough used to record the demo video (-demo-script)
+server/                      Railway relay that holds the API key (Node, no dependencies)
 CoreTests/                   Unit tests for the platform-independent core (run.sh)
+project.yml                  XcodeGen spec for a regular Xcode project (used by CI)
+.github/workflows/           macOS CI: simulator build, unsigned .ipa, demo video, server tests
 ```
 
 Run the core tests on a Mac or Linux machine with Swift installed: `./CoreTests/run.sh`.
@@ -92,4 +112,4 @@ Run the core tests on a Mac or Linux machine with Swift installed: `./CoreTests/
 - Lasso selects ink only. Typed and tutor elements are selected with the Select tool or a long-press.
 - The page map sent to the tutor gets long for pages with many strokes. Very dense pages may need tuning.
 - iCloud sync and collaboration aren't implemented. Notes are stored locally in the app's Documents folder.
-- For distribution to other people, route API calls through your own backend instead of putting keys on devices.
+- Anyone with the server's `APP_TOKEN` can spend your Claude credits, so keep it private and rotate it if it leaks. To give the app to other people, add per-user accounts to the server.
