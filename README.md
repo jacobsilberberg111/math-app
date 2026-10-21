@@ -78,13 +78,17 @@ Any note with imported PDF pages can be turned into a past paper from the **+** 
 ## The notes side
 
 - **PencilKit ink** with Apple's low-latency rendering and palm rejection. Pens: ballpoint, fountain, pencil, monoline, crayon, watercolor, plus highlighter, stroke/pixel eraser, lasso, ruler.
-- **Favourite colours and widths** per tool, Notability-style. Tap a selected swatch or width to edit it.
+- **Colours:** each tool keeps its own colour and width slots; tap a selected one to edit it. The palette has **favourites shared by every tool**, presets, a custom picker (with the system eyedropper), and an **Eyedropper** that picks a colour straight off the page.
+- **Lasso:** circle ink, typed text, tutor writing, images or cards to select them. Drag to move, use the corner handle to resize and the top handle to rotate (ink and marks; typed items and images stay upright). The bar recolours, changes thickness, copies, cuts, duplicates and deletes. Copy and paste works between notes (tap an empty spot with the lasso, or **+ → Paste**), and into other apps as an image.
+- **Convert handwriting:** lasso some writing and tap **To Text** (read on-device with Vision) or **To Math** (read as LaTeX by Claude Haiku over your tutor connection). You check and correct the result before it replaces the ink, and undo brings the ink back.
 - **Draw-and-hold shape snapping:** sketch a shape and hold: lines snap to 0/45/90°, and circles, ellipses, rectangles and triangles snap clean. Keep moving after the snap to resize, or use the **− / +** bar that appears above the shape. Apple Pencil Pro gives haptic feedback on snap.
 - **Apple Pencil:** double-tap opens the tutor's Ask menu where you're working (change it in Settings to follow the system setting, switch to the eraser, or go back to the previous tool). **Squeeze** (Pencil Pro) opens the tutor menu right where you're hovering. **Hover preview** shows the nib size and colour (M2 and later iPads).
 - **Finger gestures:** fingers scroll and zoom while the pencil draws (finger drawing is optional). Two-finger tap undoes, three-finger tap redoes, and double-tap opens the Ask menu.
 - **Palm rejection:** a hand resting on the page while you write doesn't scroll, zoom, tap or undo. A touch counts as your hand if it lands while the pencil is on or hovering over the glass, is already down when the pencil lands, or is palm-sized.
-- **Continuous pages:** blank, ruled, narrow, grid, small grid, graph, dotted and Cornell paper in six colours. Pages are added automatically as you write near the bottom. The page navigator lets you jump to, insert, duplicate and delete pages.
-- **Text boxes** support Scribble. **Images** come from Photos. **PDF import** creates annotatable pages, either as a new note or appended to one. **PDF export** renders vector elements with high-resolution ink.
+- **Continuous pages:** blank, ruled, narrow, grid, small grid, graph, dotted and Cornell paper in six colours. Pages are added automatically as you write near the bottom. The page navigator lets you jump to, insert, duplicate, clear and delete pages, and **drag pages to reorder them**. **Page size:** Letter, A4 or either in landscape (content that wouldn't fit a smaller page is scaled down to fit). Moving, resizing and clearing are undoable.
+- **Find in note** (magnifying glass or ⌘F): searches typed text, the tutor's writing, question cards, tables and your **handwriting** (read on-device), highlights every match and jumps between them.
+- **Text boxes** support Scribble. **Images** come from Photos. **PDF import** creates annotatable pages, either as a new note or appended to one.
+- **Export and share:** PDF (vector elements, high-resolution ink), images (a PNG per page), or the whole note as a **.margin** file, through the share sheet (AirDrop, Files, Mail…), or **Print**. A .margin file opens in Margin from AirDrop or Files, or via **New Note → Import Note File…**, as a new note with its ink, pages, attachments and recordings (not the tutor chat).
 - **Audio recording synced to ink:** during playback, strokes appear as they were written, and tapping a stroke jumps the audio to that moment.
 - **Library:** subjects with colours, thumbnails, sort, move, duplicate. **Search** covers titles and handwriting, which Vision recognises on-device.
 
@@ -153,6 +157,8 @@ project.yml                  XcodeGen spec for a regular Xcode project (used by 
 
 Run the core tests on a Mac or Linux machine with Swift installed: `./CoreTests/run.sh`.
 
+CI also runs a **feature check** in the simulator (`-feature-check`): it writes on a fresh note and drives the lasso, conversion, find, page, export and colour features through their real code paths, failing the build if any check fails.
+
 The demo video is recorded by launching the app with `-demo-script`. Student handwriting in it is synthesised and the tutor's turns are scripted tool calls (no network), played through the real executor, streaming previews and chat panel.
 
 ## Known gaps
@@ -160,7 +166,8 @@ The demo video is recorded by launching the app with `-demo-script`. Student han
 - Not tested on a physical iPad yet (see the status note above).
 - Freeform boards grow right and down only, up to 16,384 pt a side.
 - "Undo the tutor" restores a past paper's scores and removes pages the tutor added, but topic progress already recorded from that marking stays.
-- Lasso selects ink only. Typed and tutor elements are selected with the Select tool or a long-press.
+- The lasso rotates ink and the tutor's marks; typed text, maths, images and cards move and resize but stay upright.
+- Opening a .margin file straight from AirDrop or Files needs the Xcode build (the sideloaded .ipa). In Swift Playgrounds, use **Import Note File…**.
 - The page map sent to the tutor gets long for pages with many strokes. Very dense pages may need tuning.
 - iCloud sync and collaboration aren't implemented. Notes are stored locally in the app's Documents folder.
 - Anyone with the server's `APP_TOKEN` can spend your Claude credits, so keep it private and rotate it if it leaks. To give the app to other people, add per-user accounts to the server.

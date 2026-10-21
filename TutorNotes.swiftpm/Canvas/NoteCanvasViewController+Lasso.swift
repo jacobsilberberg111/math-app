@@ -6,6 +6,8 @@ struct LassoInkSnapshot {
     var image: UIImage      // selected strokes only (no items) on white, ~2x, padded a little
     var docBounds: CGRect   // document rect of those strokes
     var colorHex: String    // most common stroke colour, "#RRGGBB"
+    /// When each stroke was drawn, to tell whether the selection is still the same ink later.
+    var strokeDates: [Date] = []
 }
 
 /// A selection being dragged: the originals are hidden while `preview` stands in for them.
@@ -179,6 +181,7 @@ extension NoteCanvasViewController {
         box.configure(hasInk: !strokes.isEmpty,
                       canRecolour: !strokes.isEmpty || items.contains { canRecolour($0) },
                       canThicken: !strokes.isEmpty || items.contains { isInkMark($0) },
+                      canRotate: items.allSatisfy { isInkMark($0) },
                       favourites: ColorFavorites.shared.colors)
         box.isHidden = false
         chrome.bringSubviewToFront(box)
@@ -263,6 +266,7 @@ extension NoteCanvasViewController {
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = false
+        format.preferredRange = .standard
         let elements = lassoElements
         let ink = PKDrawing(strokes: lassoStrokes)
         let env = environment()
@@ -291,7 +295,7 @@ extension NoteCanvasViewController {
         let rect = lasso.bounds.insetBy(dx: -ElementView.padding, dy: -ElementView.padding).integral
         var scale = min(zoom * displayScale, 3)
         let pixels = rect.width * rect.height * scale * scale
-        if pixels > 24_000_000 { scale *= sqrt(24_000_000 / pixels) }
+        if pixels > 8_000_000 { scale *= sqrt(8_000_000 / pixels) }
         let preview = UIImageView(image: renderLassoSelection(rect: rect, scale: scale))
         preview.frame = rect
         if let v = lasso.view { chrome.insertSubview(preview, belowSubview: v) } else { chrome.addSubview(preview) }
@@ -465,7 +469,8 @@ extension NoteCanvasViewController {
                 drawing.image(from: area, scale: format.scale).draw(in: CGRect(origin: .zero, size: area.size))
             }
         }
-        return LassoInkSnapshot(image: image, docBounds: bounds, colorHex: dominantColourHex(of: strokes) ?? tool.penColorHex)
+        return LassoInkSnapshot(image: image, docBounds: bounds, colorHex: dominantColourHex(of: strokes) ?? tool.penColorHex,
+                                strokeDates: strokes.map(\.path.creationDate))
     }
 
     /// The most common stroke colour as "#RRGGBB".

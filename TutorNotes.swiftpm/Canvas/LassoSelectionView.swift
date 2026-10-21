@@ -20,9 +20,14 @@ final class LassoGestureRecognizer: UIGestureRecognizer {
             if tracked?.type == .direct, state == .possible { state = .failed }
             return
         }
-        guard touches.count == 1, let t = touches.first, accepts(t),
-              t.type == .pencil || (acceptsFinger && t.type == .direct) else {
+        // Two fingers at once mean scroll or zoom.
+        if touches.count > 1, touches.allSatisfy({ $0.type == .direct }) {
             state = .failed
+            return
+        }
+        // Anything else that can't start a loop (a resting palm, a finger when fingers scroll) is
+        // ignored rather than failing the gesture, so the pencil can still start one after it.
+        guard let t = touches.first(where: { accepts($0) && ($0.type == .pencil || (acceptsFinger && $0.type == .direct)) }) else {
             return
         }
         tracked = t
@@ -50,15 +55,30 @@ final class LassoGestureRecognizer: UIGestureRecognizer {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard let t = tracked, touches.contains(t) else { return }
+        guard let t = tracked else {
+            // Only ignored touches so far: once they've all lifted, there was no loop.
+            if allTouchesEnded(event, after: touches) { state = .failed }
+            return
+        }
+        guard touches.contains(t) else { return }
         tracked = nil
         state = state == .possible ? .failed : .ended
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard let t = tracked, touches.contains(t) else { return }
+        guard let t = tracked else {
+            if allTouchesEnded(event, after: touches) { state = .failed }
+            return
+        }
+        guard touches.contains(t) else { return }
         tracked = nil
         state = state == .possible ? .failed : .cancelled
+    }
+
+    /// Whether no touch this recogniser is watching stays down once `ending` lifts.
+    private func allTouchesEnded(_ event: UIEvent, after ending: Set<UITouch>) -> Bool {
+        let down = (event.touches(for: self) ?? []).filter { $0.phase != .ended && $0.phase != .cancelled }
+        return down.subtracting(ending).isEmpty
     }
 
     override func reset() {
@@ -111,6 +131,8 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
     private let thicknessButton = UIButton(type: .system)
     private var titled: [(button: UIButton, title: String)] = []
     private var showsTitles = true
+    /// The bar's measured size, kept until its buttons change (measuring it on every scroll is slow).
+    private var barSize: CGSize?
 
     /// The selection's box in document coordinates, and the zoom and visible area it was laid out for.
     private var box = CGRect.zero
@@ -214,12 +236,17 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
     }
 
     /// What the bar offers for this selection: conversion needs ink, colour and thickness need something that has them.
-    func configure(hasInk: Bool, canRecolour: Bool, canThicken: Bool, favourites: [String]) {
+    /// `canRotate`: ink turns freely, but typed items, images and cards stay upright, so a selection
+    /// with any of those has no rotate handle.
+    func configure(hasInk: Bool, canRecolour: Bool, canThicken: Bool, canRotate: Bool, favourites: [String]) {
         toTextButton.isHidden = !hasInk
         toMathButton.isHidden = !hasInk
         colourButton.isHidden = !canRecolour
         thicknessButton.isHidden = !canThicken
+        rotateHandle.isHidden = !canRotate
+        stem.isHidden = !canRotate
         colourButton.menu = colourMenu(favourites: favourites)
+        barSize = nil
     }
 
     private func colourMenu(favourites: [String]) -> UIMenu {
@@ -337,9 +364,11 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
         if wantsTitles != showsTitles {
             showsTitles = wantsTitles
             for item in titled { item.button.configuration?.title = wantsTitles ? item.title : nil }
+            barSize = nil
         }
         actionBar.transform = .identity
-        let size = actionBar.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        let size = barSize ?? actionBar.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        barSize = size
         actionBar.bounds = CGRect(origin: .zero, size: size)
         actionBar.transform = CGAffineTransform(scaleX: inv, y: inv)
         let w = size.width * inv, h = size.height * inv
@@ -363,7 +392,7 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
         let inv = 1 / zoom
         let reach = LassoSelectionView.grabRadius * inv
         if p.distance(to: resizeHandle.center) <= reach { return .resize }
-        if p.distance(to: rotateHandle.center) <= reach { return .rotate }
+        if !rotateHandle.isHidden && p.distance(to: rotateHandle.center) <= reach { return .rotate }
         return box.insetBy(dx: -8 * inv, dy: -8 * inv).contains(p) ? .move : nil
     }
 
@@ -419,7 +448,7 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
             let diagonal = CGPoint(x: box.maxX - anchor.x, y: box.maxY - anchor.y)
             let handle = CGPoint(x: box.maxX + drag.x - anchor.x, y: box.maxY + drag.y - anchor.y)
             let along = (handle.x * diagonal.x + handle.y * diagonal.y) / max(diagonal.x * diagonal.x + diagonal.y * diagonal.y, 1)
-            let smallest = max(0.05, 16 / max(box.width, box.height, 1))
+            let smallest = min(1, max(0.05, 16 / max(box.width, box.height, 1)))
             let s = min(max(along, smallest), 20)
             return CGAffineTransform(translationX: -anchor.x, y: -anchor.y)
                 .concatenating(CGAffineTransform(scaleX: s, y: s))

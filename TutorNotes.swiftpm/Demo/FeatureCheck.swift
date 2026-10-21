@@ -182,6 +182,19 @@ extension DemoDirector {
         canvas.setLassoSelection(strokes: Array(n..<(n + extra)), elements: [])
         canvas.performLassoAction(.delete)
         FeatureCheck.check("cleanup", doc.drawing.strokes.count == n, "\(doc.drawing.strokes.count) strokes")
+        await wait(0.25)
+
+        // Ink changed by PencilKit itself (its own undo, a pencil stroke) drops the selection, which
+        // refers to strokes by position.
+        let before = canvas.canvasView.drawing
+        canvas.setLassoSelection(strokes: Array(0..<n), elements: [])
+        var outside = before
+        outside.strokes.append(Handwriting.pkStroke([CGPoint(x: 120, y: 120), CGPoint(x: 160, y: 130)], color: .black, width: 3))
+        canvas.canvasView.drawing = outside
+        await wait(0.2)
+        FeatureCheck.check("lasso clears on outside ink change", canvas.lasso.isEmpty)
+        canvas.canvasView.drawing = before
+        await wait(0.2)
     }
 
     // MARK: Convert

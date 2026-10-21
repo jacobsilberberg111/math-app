@@ -149,8 +149,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         if v.isDescendant(of: selectionView.actionBar) { return false }
         if v.isDescendant(of: shapeBar) { return false }
         // Touches on the lasso's box, handles and bar belong to it, not to the canvas's own gestures.
-        if let box = lasso.view, v.isDescendant(of: box),
-           gestureRecognizer === tapGesture || gestureRecognizer === lasso.gesture || gestureRecognizer === longPress { return false }
+        if let box = lasso.view, !box.isHidden, v.isDescendant(of: box) { return false }
         return true
     }
 

@@ -185,9 +185,15 @@ extension EditorModel {
 
     /// Swaps the selected ink for the converted element, as one undo step.
     func finishInkConversion(_ conversion: InkConversion) {
-        guard inkConversion?.id == conversion.id, conversion.canConvert,
-              let element = conversion.makeElement(in: document) else { return }
+        guard inkConversion?.id == conversion.id, conversion.canConvert else { return }
+        // The ink must still be the selected ink (the tutor or an undo may have changed it meanwhile).
+        guard let canvas, canvas.lassoStrokes.map(\.path.creationDate) == conversion.snapshot.strokeDates else {
+            inkConversion = nil
+            flash("The handwriting changed. Select it again to convert it.")
+            return
+        }
+        guard let element = conversion.makeElement(in: document) else { return }
         inkConversion = nil
-        canvas?.replaceLassoInk(with: element, actionName: conversion.kind == .text ? "Convert to Text" : "Convert to Math")
+        canvas.replaceLassoInk(with: element, actionName: conversion.kind == .text ? "Convert to Text" : "Convert to Math")
     }
 }

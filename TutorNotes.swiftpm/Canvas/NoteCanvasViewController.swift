@@ -588,6 +588,9 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         let newDrawing = canvasView.drawing
         let oldCount = document.drawing.strokes.count
         document.canvasDrawingChanged(newDrawing)
+        // PencilKit's own undo and redo change the ink directly; a lasso selection holds stroke
+        // indices, so it can't outlive that.
+        if !lasso.isEmpty && !lasso.isCommitting { clearLassoSelection() }
         if newDrawing.strokes.count < oldCount { revalidateEditableShape() }
         // The pixel eraser splits strokes, which also grows the count; that isn't new writing.
         if newDrawing.strokes.count > oldCount, tool.kind != .eraser {

@@ -102,6 +102,7 @@ extension NoteCanvasViewController {
             popover.sourceRect = onScreen.isNull ? CGRect(x: view.bounds.midX, y: 80, width: 1, height: 1) : onScreen
             popover.permittedArrowDirections = [.up, .down, .left, .right]
         }
+        picker.presentationController?.delegate = self
         present(picker, animated: true)
     }
 
@@ -249,8 +250,21 @@ extension NoteCanvasViewController: UIColorPickerViewControllerDelegate {
     }
 
     func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) {
+        applyPickedLassoColour()
+    }
+
+    /// The colour chosen in the picker, once it closes (by its close button or a tap outside).
+    func applyPickedLassoColour() {
         guard let color = lasso.pickedColour else { return }
         lasso.pickedColour = nil
         recolourLasso(color.hexString)
+    }
+}
+
+extension NoteCanvasViewController: UIAdaptivePresentationControllerDelegate {
+    /// A tap outside the colour picker's popover closes it without "finishing"; the colour still applies.
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        guard presentationController.presentedViewController is UIColorPickerViewController else { return }
+        applyPickedLassoColour()
     }
 }
