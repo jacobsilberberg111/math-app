@@ -50,7 +50,8 @@ struct TutorPanel: View {
             if dictation.isRecording { draft = t }
         }
         .onChange(of: model.pendingFocus != nil) { _, has in
-            if has { composerFocused = true }
+            // The side panel stays mounted while closed (a board asks from its floating bar then).
+            if has && model.showTutor { composerFocused = true }
         }
         .onChange(of: model.showTutor) { _, shown in
             // The side panel stays mounted when closed: don't leave the keyboard or the mic up for it.
@@ -253,7 +254,7 @@ struct TutorPanel: View {
             if let focus = model.pendingFocus {
                 HStack(spacing: 6) {
                     Image(systemName: "viewfinder")
-                    Text("About the selected area on page \(focus.page + 1)")
+                    Text(model.document.isFreeform ? "About the selected area" : "About the selected area on page \(focus.page + 1)")
                     Spacer()
                     Button {
                         model.pendingFocus = nil

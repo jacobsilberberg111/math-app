@@ -4,12 +4,13 @@ import UniformTypeIdentifiers
 
 enum TutorSuggestion: Equatable {
     case stuck(question: Int, elementID: String)
-    case offscreen(page: Int)
+    /// The tutor wrote somewhere the student isn't looking (`docRect` in document coordinates).
+    case offscreen(page: Int, docRect: CGRect, onBoard: Bool)
 
     var title: String {
         switch self {
         case .stuck(let q, _): return "Stuck on Q\(q)? Get a hint"
-        case .offscreen(let p): return "Tutor wrote on page \(p + 1)"
+        case .offscreen(let p, _, let onBoard): return onBoard ? "Tutor wrote nearby: show me" : "Tutor wrote on page \(p + 1)"
         }
     }
 
@@ -149,7 +150,7 @@ final class TutorEngine {
         let newAttachments = document.content.attachments.filter { !session.sentAttachmentIDs.contains($0.id) }
         var item = ChatItem(role: .student, text: displayText ?? trimmed)
         item.attachmentNames = newAttachments.map(\.name)
-        if let focus { item.contextLabel = "Selected area on page \(focus.page + 1)" }
+        if let focus { item.contextLabel = document.isFreeform ? "Selected area" : "Selected area on page \(focus.page + 1)" }
         chat.append(item)
 
         var content: [JSONValue] = attachmentBlocks(newAttachments)
@@ -175,7 +176,7 @@ final class TutorEngine {
     }
 
     func quick(_ action: TutorQuickAction, focus: (page: Int, rect: CGRect)? = nil) {
-        let desc = focus.map { "the outlined region on page \($0.page + 1)" }
+        let desc = focus.map { document.isFreeform ? "the outlined region" : "the outlined region on page \($0.page + 1)" }
         send(action.prompt(regionDescription: desc), focus: focus, displayText: action.title)
     }
 
@@ -801,7 +802,7 @@ final class TutorEngine {
         let recent = recentWriting.filter { Date().timeIntervalSince($0.0) < 120 }.map(\.1)
         // The system prompt recognises observation turns by their leading [observation] text.
         var content: [JSONValue] = [TutorContextBuilder.text(TutorPrompts.observationPrompt(proactivity: settings.proactivity,
-                                                                                            region: "page \(page + 1) \(region.roundedForDisplay)"))]
+                                                                                            region: document.isFreeform ? "the board at \(region.roundedForDisplay)" : "page \(page + 1) \(region.roundedForDisplay)"))]
         content += builder.blocks(focus: (page, region), recentWriting: recent, extraNotes: [])
         var messages: [JSONValue] = [["role": "user", "content": .array(content)]]
         // Observation runs in its own short exchange so it never interleaves with the chat history.

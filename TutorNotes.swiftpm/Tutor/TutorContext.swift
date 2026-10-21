@@ -37,6 +37,7 @@ struct TutorContextBuilder {
     /// Content blocks for a turn: snapshots, an optional sharper crop of the focus region, then
     /// the canvas description.
     func blocks(focus: (page: Int, rect: CGRect)?, recentWriting: [CGRect], extraNotes: [String]) -> [JSONValue] {
+        if doc.isFreeform { return boardBlocks(focus: focus, recentWriting: recentWriting, extraNotes: extraNotes) }
         var out: [JSONValue] = []
         let pages = pagesToShow(focusPage: focus?.page)
         for p in pages {
@@ -54,11 +55,48 @@ struct TutorContextBuilder {
         return out
     }
 
+    /// A board can be huge, so the tutor sees the student's current view of it (plus the focus
+    /// region if that's off-screen), labelled in board coordinates.
+    func boardBlocks(focus: (page: Int, rect: CGRect)?, recentWriting: [CGRect], extraNotes: [String]) -> [JSONValue] {
+        var out: [JSONValue] = []
+        let board = CGRect(origin: .zero, size: doc.pageSize)
+        var view = boardView
+        if let f = focus?.rect, !view.insetBy(dx: -20, dy: -20).contains(f) {
+            view = view.union(f.insetBy(dx: -80, dy: -80)).intersection(board)
+        }
+        if let snap = PageRenderer.snapshot(doc, page: 0, focus: focus?.rect, region: view) {
+            let r = snap.region
+            let scaleNote = snap.scale < 0.99
+                ? "shown at \(Int((snap.scale * 100).rounded()))% scale: read positions from the grid labels, which are board coordinates"
+                : "1 px per point; grid labels are board coordinates"
+            out.append(TutorContextBuilder.text("The student's view of the board, x \(Int(r.minX))–\(Int(r.maxX)), y \(Int(r.minY))–\(Int(r.maxY)) (\(scaleNote)):"))
+            out.append(TutorContextBuilder.imageBlock(jpeg: snap.jpeg))
+        }
+        if let focus, let crop = PageRenderer.regionCrop(doc, page: 0, region: focus.rect) {
+            out.append(TutorContextBuilder.text("Close-up of the outlined region (for legibility; use board coordinates from the view above):"))
+            out.append(TutorContextBuilder.imageBlock(jpeg: crop))
+        }
+        out.append(TutorContextBuilder.text(canvasState(shownPages: [0], focus: focus, recentWriting: recentWriting, extraNotes: extraNotes)))
+        return out
+    }
+
+    /// The part of the board on screen (board coordinates).
+    var boardView: CGRect {
+        let board = CGRect(origin: .zero, size: doc.pageSize)
+        let v = (doc.visibleBoardRect ?? CGRect(x: 0, y: 0, width: 1000, height: 1200)).intersection(board)
+        return v.isNull || v.width < 50 || v.height < 50 ? CGRect(x: 0, y: 0, width: min(1000, board.width), height: min(1200, board.height)) : v
+    }
+
     func canvasState(shownPages: [Int], focus: (page: Int, rect: CGRect)?, recentWriting: [CGRect], extraNotes: [String]) -> String {
         var s = "<canvas_state>\n"
         let current = canvas?.currentPageIndex ?? 0
-        s += "Note: \"\(doc.meta.title)\" · \(doc.content.pages.count) page\(doc.content.pages.count == 1 ? "" : "s") · page size \(Int(doc.pageSize.width))×\(Int(doc.pageSize.height)) pt · student is looking at page \(current + 1)"
-        if let canvas {
+        if doc.isFreeform {
+            let v = boardView
+            s += "Note: \"\(doc.meta.title)\" · freeform board \(Int(doc.pageSize.width))×\(Int(doc.pageSize.height)) pt (one sheet, use page 1; it grows right and down as needed) · the student is viewing x \(Int(v.minX))–\(Int(v.maxX)), y \(Int(v.minY))–\(Int(v.maxY))"
+        } else {
+            s += "Note: \"\(doc.meta.title)\" · \(doc.content.pages.count) page\(doc.content.pages.count == 1 ? "" : "s") · page size \(Int(doc.pageSize.width))×\(Int(doc.pageSize.height)) pt · student is looking at page \(current + 1)"
+        }
+        if let canvas, !doc.isFreeform {
             let vis = canvas.visibleDocRect.intersection(doc.pageRect(current))
             if !vis.isNull {
                 let o = doc.pageOrigin(current)
@@ -67,7 +105,9 @@ struct TutorContextBuilder {
         }
         s += "\n"
         if let focus {
-            s += "Focus: the student selected page \(focus.page + 1) \(focus.rect.roundedForDisplay) — outlined in blue.\n"
+            s += doc.isFreeform
+                ? "Focus: the student selected \(focus.rect.roundedForDisplay) on the board — outlined in blue.\n"
+                : "Focus: the student selected page \(focus.page + 1) \(focus.rect.roundedForDisplay) — outlined in blue.\n"
         }
         for p in doc.content.pages.indices {
             let detailed = shownPages.contains(p) || focus?.page == p
@@ -117,7 +157,7 @@ struct TutorContextBuilder {
     }
 
     func describePage(_ p: Int) -> String {
-        var s = "Page \(p + 1)"
+        var s = doc.isFreeform ? "Around the student's view" : "Page \(p + 1)"
         if let pdfIdx = doc.content.pages[p].pdfPageIndex { s += " (PDF page \(pdfIdx + 1) as background)" }
         s += ":\n"
         let clusters = layout.inkClusters(page: p)
@@ -133,10 +173,19 @@ struct TutorContextBuilder {
         if !bands.isEmpty {
             s += "  free full-width space: " + bands.map { "y\(Int($0.0))–\(Int($0.1))" }.joined(separator: ", ") + "\n"
         }
-        let els = doc.elements(onPage: p)
+        var els = doc.elements(onPage: p)
+        var elsewhere = 0
+        if doc.isFreeform {
+            let near = layout.bounds.insetBy(dx: -240, dy: -240)
+            elsewhere = els.filter { !$0.frame.intersects(near) }.count
+            els = els.filter { $0.frame.intersects(near) }
+        }
         if !els.isEmpty {
             s += "  elements:\n"
             for e in els { s += "    " + describe(e) + "\n" }
+        }
+        if elsewhere > 0 {
+            s += "  \(elsewhere) more element\(elsewhere == 1 ? "" : "s") elsewhere on the board (not in view)\n"
         }
         return s
     }

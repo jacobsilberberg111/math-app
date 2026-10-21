@@ -90,6 +90,90 @@ enum PaperRenderer {
         return result
     }
 
+    /// A freeform board's pattern for the part of the board inside `rect` (board coordinates),
+    /// returned relative to `rect`'s origin. Lines run edge to edge on a fixed lattice with no
+    /// margins, so neighbouring tiles join up seamlessly.
+    static func boardPatternPaths(_ pattern: PaperPattern, rect: CGRect) -> PatternPaths {
+        var result = PatternPaths()
+        let s = spacing(for: pattern)
+        guard s > 0, rect.width > 0, rect.height > 0 else { return result }
+        let o = rect.origin
+        // Lattice indices covering the rect, including lines exactly on its edges (each tile draws
+        // its half of a shared edge line).
+        func range(_ lo: CGFloat, _ hi: CGFloat) -> [Int] {
+            let a = max(1, Int(ceil(lo / s))), b = Int(floor(hi / s))
+            return a <= b ? Array(a...b) : []
+        }
+        switch pattern {
+        case .blank:
+            break
+        case .ruled, .narrowRuled, .cornell:
+            let lines = CGMutablePath()
+            for k in range(rect.minY, rect.maxY) {
+                let y = CGFloat(k) * s - o.y
+                lines.move(to: CGPoint(x: 0, y: y))
+                lines.addLine(to: CGPoint(x: rect.width, y: y))
+            }
+            result.light = lines
+        case .grid, .smallGrid, .graph:
+            let light = CGMutablePath()
+            let strong = CGMutablePath()
+            let strongEvery = pattern == .graph ? 5 : (pattern == .smallGrid ? 4 : 0)
+            for k in range(rect.minX, rect.maxX) {
+                let p = (strongEvery > 0 && k % strongEvery == 0) ? strong : light
+                let x = CGFloat(k) * s - o.x
+                p.move(to: CGPoint(x: x, y: 0))
+                p.addLine(to: CGPoint(x: x, y: rect.height))
+            }
+            for k in range(rect.minY, rect.maxY) {
+                let p = (strongEvery > 0 && k % strongEvery == 0) ? strong : light
+                let y = CGFloat(k) * s - o.y
+                p.move(to: CGPoint(x: 0, y: y))
+                p.addLine(to: CGPoint(x: rect.width, y: y))
+            }
+            result.light = light
+            if strongEvery > 0 { result.strong = strong }
+        case .dots:
+            let dots = CGMutablePath()
+            let cols = range(rect.minX - 1.1, rect.maxX + 1.1)
+            for j in range(rect.minY - 1.1, rect.maxY + 1.1) {
+                for i in cols {
+                    dots.addEllipse(in: CGRect(x: CGFloat(i) * s - o.x - 1.1, y: CGFloat(j) * s - o.y - 1.1, width: 2.2, height: 2.2))
+                }
+            }
+            result.dots = dots
+        }
+        return result
+    }
+
+    /// Fills `region` of a freeform board (board coordinates, in the context's current space)
+    /// with the paper colour and its pattern.
+    static func drawBoard(_ paper: PaperStyle, region: CGRect, ctx: CGContext, patternAlpha: CGFloat = 1) {
+        ctx.saveGState()
+        ctx.setFillColor(UIColor(hex: paper.color.hex).cgColor)
+        ctx.fill(region)
+        let paths = boardPatternPaths(paper.pattern, rect: region)
+        ctx.translateBy(x: region.minX, y: region.minY)
+        if let light = paths.light {
+            ctx.addPath(light)
+            ctx.setStrokeColor(lineColor(paper).withAlphaComponent(0.9 * patternAlpha).cgColor)
+            ctx.setLineWidth(0.75)
+            ctx.strokePath()
+        }
+        if let strong = paths.strong {
+            ctx.addPath(strong)
+            ctx.setStrokeColor(lineColor(paper).withAlphaComponent(patternAlpha).cgColor)
+            ctx.setLineWidth(1.3)
+            ctx.strokePath()
+        }
+        if let dots = paths.dots {
+            ctx.addPath(dots)
+            ctx.setFillColor(lineColor(paper).withAlphaComponent(patternAlpha).cgColor)
+            ctx.fillPath()
+        }
+        ctx.restoreGState()
+    }
+
     static func lineColor(_ paper: PaperStyle) -> UIColor { UIColor(hex: paper.color.lineHex) }
 
     static func accentColor(_ paper: PaperStyle) -> UIColor {

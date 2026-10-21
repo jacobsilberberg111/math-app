@@ -17,6 +17,8 @@ final class DemoDirector {
     static var showTutorPanel: Bool { arguments.contains("-uitest-show-tutor") }
 
     private var openNote: ((NoteMeta) -> Void)?
+    private var closeNote: (() -> Void)?
+    private var newBoard: ((String) -> Void)?
     private weak var library: LibraryStore?
     private var started = false
     private var editor: EditorModel?
@@ -24,11 +26,14 @@ final class DemoDirector {
 
     // MARK: Hooks from the UI
 
-    func libraryAppeared(library: LibraryStore, open: @escaping (NoteMeta) -> Void) {
+    func libraryAppeared(library: LibraryStore, open: @escaping (NoteMeta) -> Void, close: @escaping () -> Void,
+                         newBoard: @escaping (String) -> Void) {
         let settings = AppSettings.shared
         if DemoDirector.skipOnboarding { settings.hasSeenOnboarding = true }
         self.library = library
         self.openNote = open
+        self.closeNote = close
+        self.newBoard = newBoard
         if DemoDirector.isDemo {
             guard !started else { return }
             started = true
@@ -302,17 +307,58 @@ final class DemoDirector {
         endTutorTurn(model, replyID: reply)
         await wait(2.5)
 
-        // 6. Pages overview, then back to the full note.
+        // 6. Pages overview.
         model.showPages = true
-        await wait(3.0)
+        await wait(2.6)
         model.showPages = false
         await wait(1.0)
         withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) { model.showTutor = false }
-        canvas.zoomToFit()
-        canvas.scrollToPage(0)
+        await wait(1.0)
+
+        // 7. Back to Home, where the note waits to be jumped back into.
+        if let library { model.close(library: library) }
+        closeNote?()
+        await wait(3.8)
+
+        // 8. A freeform board: write, switch the lines, circle the working and ask from the bar.
+        editor = nil
+        newBoard?("Factorising practice")
+        let board = await waitForEditor()
+        guard let boardCanvas = await waitForCanvas(board) else { log("no board canvas"); return }
+        log("board open, canvas width \(Int(boardCanvas.view.bounds.width))")
+        await wait(1.4)
+        board.tools.kind = .pen
+        board.tools.penColorIndex = 0
+        await handwrite("x² + 5x + 6 = 0", at: CGPoint(x: 120, y: 170), size: 34, color: ink, width: 2.7, canvas: boardCanvas)
+        await wait(0.3)
+        await handwrite("(x + 2)(x + 3) = 0", at: CGPoint(x: 120, y: 245), size: 34, color: ink, width: 2.7, canvas: boardCanvas)
+        await wait(0.8)
+        for (pattern, name) in [(PaperPattern.dots, "Dotted"), (.ruled, "Ruled"), (.grid, "Grid")] {
+            board.document.setPaper(PaperStyle(pattern: pattern, color: .white), forPage: nil)
+            board.flash(name)
+            await wait(1.2)
+        }
+        board.tools.kind = .tutor
+        await wait(0.6)
+        let region = CGRect(x: 100, y: 150, width: 470, height: 160)
+        boardCanvas.showRegion(region)
+        board.askAboutRegion(QuickMenuRequest(page: 0, rect: region, anchor: boardCanvas.viewRect(fromDoc: region)))
+        await wait(1.8)
+        board.tools.kind = .pen
+        let boardReply = beginTutorTurn(board, studentText: "Is my factorising right? What are the roots?",
+                                        thinking: "2 × 3 = 6 and 2 + 3 = 5, so the factorising is correct; the roots are −2 and −3.")
+        board.pendingFocus = nil
+        boardCanvas.clearRegion()
+        boardCanvas.setTutorActivity(.thinking(nil))
+        await wait(1.6)
+        await streamChat("Yes, that's right! The roots are x = −2 and x = −3. I've sketched it so you can see them.", into: boardReply, model: board)
+        await tool("mark", #"{"page": 1, "verdict": "correct", "x": 540, "y": 236, "comment": "Spot on"}"#, model: board, replyID: boardReply)
+        await tool("write", #"{"page": 1, "x": 120, "y": 335, "width": 470, "text": "So $x = -2$ or $x = -3$. Both are negative because $+5x$ and $+6$ are positive."}"#, model: board, replyID: boardReply)
+        await tool("graph", #"{"page": 1, "x": 650, "y": 130, "width": 330, "height": 300, "x_min": -5, "x_max": 1, "y_min": -1, "y_max": 6, "functions": [{"expression": "x^2 + 5x + 6", "label": "$y = x^2 + 5x + 6$"}], "points": [{"x": -2, "y": 0, "label": "(−2, 0)", "color": "red"}, {"x": -3, "y": 0, "label": "(−3, 0)", "color": "red"}]}"#, model: board, replyID: boardReply)
+        endTutorTurn(board, replyID: boardReply)
+        await wait(3.2)
+        boardCanvas.zoomToShowAll()
         await wait(3.0)
-        canvas.scrollToPage(1)
-        await wait(4.0)
         // Marker the recording script waits for.
         print("DEMO_COMPLETE")
         FileManager.default.createFile(atPath: NSTemporaryDirectory() + "demo-complete", contents: Data())

@@ -17,6 +17,11 @@ struct NoteMeta: Codable, Identifiable, Equatable {
     var hasAudio: Bool
     var hasTutorSession: Bool
     var paper: PaperStyle?
+    // Added after v1; optional so older meta.json files still decode.
+    var layout: NoteLayout?
+    var lastOpenedAt: Date?
+    /// Question cards still waiting for an answer, counted when the note was last saved.
+    var openQuestions: Int?
 
     init(id: UUID = UUID(), title: String, subjectID: UUID? = nil, paper: PaperStyle? = nil) {
         self.id = id
@@ -30,6 +35,17 @@ struct NoteMeta: Codable, Identifiable, Equatable {
         self.hasTutorSession = false
         self.paper = paper
     }
+
+    var isFreeform: Bool { layout == .freeform }
+
+    /// When the note was last opened or edited, whichever is later (for "recent" lists).
+    var lastActivity: Date { max(lastOpenedAt ?? .distantPast, modifiedAt) }
+}
+
+/// A note is either a stack of pages or a freeform board: one large sheet with no page breaks
+/// that grows as you write.
+enum NoteLayout: String, Codable {
+    case pages, freeform
 }
 
 struct Subject: Codable, Identifiable, Equatable, Hashable {
@@ -57,6 +73,18 @@ enum PaperPattern: String, Codable, CaseIterable, Identifiable {
         case .dots: return "Dotted"
         case .cornell: return "Cornell"
         case .graph: return "Graph Paper"
+        }
+    }
+
+    /// Backgrounds that make sense on a freeform board (Cornell needs page edges).
+    static let boardPatterns: [PaperPattern] = [.blank, .ruled, .narrowRuled, .grid, .smallGrid, .dots, .graph]
+
+    var symbol: String {
+        switch self {
+        case .blank: return "square"
+        case .ruled, .narrowRuled, .cornell: return "line.3.horizontal"
+        case .grid, .smallGrid, .graph: return "squareshape.split.3x3"
+        case .dots: return "circle.grid.3x3"
         }
     }
 }
@@ -119,6 +147,9 @@ enum Author: String, Codable {
 
 struct NoteContent: Codable {
     var version: Int = 1
+    /// nil for notes made before freeform boards existed (they are all pages).
+    var layout: NoteLayout?
+    /// For a freeform board this is the board's size; it grows as content nears the edge.
     var pageSize: PageSize = .letter
     var pages: [Page] = [Page(paper: .standard)]
     var elements: [CanvasElement] = []

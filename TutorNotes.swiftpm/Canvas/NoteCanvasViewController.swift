@@ -18,6 +18,9 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     let chrome = PassthroughView()
 
     var pageViews: [Int: PageBackgroundView] = [:]
+    /// Freeform boards draw their background as tiles, keyed by row * 4096 + column.
+    var boardTiles: [Int: PageBackgroundView] = [:]
+    static let boardTileSize: CGFloat = 1024
     var elementViews: [String: ElementView] = [:]
 
     private(set) var tool = CanvasToolConfig()
@@ -127,8 +130,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         let width = canvasView.bounds.width
         if abs(width - lastLayoutWidth) > 0.5 {
             let fit = fitZoom
-            canvasView.minimumZoomScale = max(0.3, fit * 0.5)
-            canvasView.maximumZoomScale = max(5, fit * 5)
+            updateZoomLimits()
             let topDocY = visibleDocRect.minY
             if !userHasZoomed || !hasLaidOut {
                 canvasView.setZoomScale(fit, animated: false)
@@ -162,9 +164,25 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
 
     // MARK: Layout & zoom
 
+    /// The zoom a note opens at and returns to: pages fit the width; boards open at actual size.
     var fitZoom: CGFloat {
+        if document.isFreeform { return 1 }
         let w = max(canvasView.bounds.width, 100)
         return min(1.7, w / document.documentSize.width)
+    }
+
+    func updateZoomLimits() {
+        if document.isFreeform {
+            // Out far enough to see the whole board, no further.
+            let b = canvasView.bounds.size, s = document.pageSize
+            let whole = min(b.width / max(s.width, 1), b.height / max(s.height, 1))
+            canvasView.minimumZoomScale = max(0.1, min(0.9, whole))
+            canvasView.maximumZoomScale = 5
+        } else {
+            let fit = fitZoom
+            canvasView.minimumZoomScale = max(0.3, fit * 0.5)
+            canvasView.maximumZoomScale = max(5, fit * 5)
+        }
     }
 
     var displayScale: CGFloat { max(1, traitCollection.displayScale) }
@@ -193,6 +211,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             selectionView.layoutChrome(zoom: z)
         }
         regionLayer.lineWidth = 2 / z
+        if document.isFreeform { updateZoomLimits() }
         updateVisiblePages()
     }
 
@@ -257,15 +276,41 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         userHasZoomed = false
     }
 
+    /// Freeform boards: zooms out to show everything on the board (or the whole board if empty).
+    func zoomToShowAll() {
+        let board = CGRect(origin: .zero, size: document.pageSize)
+        let target = (document.boardContentBounds?.insetBy(dx: -60, dy: -60) ?? board).intersection(board)
+        guard !target.isNull, target.width > 0, target.height > 0 else { return }
+        let b = canvasView.bounds.size
+        let z = min(max(canvasView.minimumZoomScale, min(b.width / target.width, b.height / target.height)), 1.5)
+        canvasView.setZoomScale(z, animated: false)
+        layoutDocument()
+        let inset = canvasView.contentInset
+        let maxX = max(-inset.left, canvasView.contentSize.width - b.width + inset.right)
+        let maxY = max(0, canvasView.contentSize.height - b.height)
+        let x = min(max(-inset.left, target.midX * z - b.width / 2), maxX)
+        let y = min(max(0, target.midY * z - b.height / 2), maxY)
+        canvasView.contentOffset = CGPoint(x: x, y: y)
+        rasterizeForCurrentZoom()
+        userHasZoomed = true
+    }
+
     // MARK: Pages
 
     func reloadPages() {
         pageViews.values.forEach { $0.removeFromSuperview() }
         pageViews.removeAll()
+        boardTiles.values.forEach { $0.removeFromSuperview() }
+        boardTiles.removeAll()
         layoutDocument()
     }
 
     func updateVisiblePages() {
+        if document.isFreeform {
+            document.visibleBoardRect = visibleDocRect
+            updateBoardTiles()
+            return
+        }
         let r = visibleDocRect.insetBy(dx: 0, dy: -document.pageSize.height * 1.2)
         let count = document.content.pages.count
         for i in 0..<count {
@@ -291,9 +336,43 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         }
     }
 
+    /// Builds the board tiles around what's on screen and drops the rest.
+    func updateBoardTiles() {
+        let board = CGRect(origin: .zero, size: document.pageSize)
+        let t = NoteCanvasViewController.boardTileSize
+        let margin = max(t / 2, 300 / max(zoom, 0.05))
+        let want = visibleDocRect.insetBy(dx: -margin, dy: -margin).intersection(board)
+        let paper = document.content.pages.first?.paper ?? .standard
+        var keep = Set<Int>()
+        if !want.isNull, want.width > 1, want.height > 1 {
+            let c0 = Int(floor(want.minX / t)), c1 = Int(floor((want.maxX - 0.5) / t))
+            let r0 = Int(floor(want.minY / t)), r1 = Int(floor((want.maxY - 0.5) / t))
+            for r in r0...max(r0, r1) {
+                for c in c0...max(c0, c1) {
+                    let rect = CGRect(x: CGFloat(c) * t, y: CGFloat(r) * t, width: t, height: t).intersection(board)
+                    guard !rect.isNull, rect.width > 0, rect.height > 0 else { continue }
+                    let key = r * 4096 + c
+                    keep.insert(key)
+                    let v = boardTiles[key] ?? {
+                        let nv = PageBackgroundView(frame: rect)
+                        pagesContainer.addSubview(nv)
+                        boardTiles[key] = nv
+                        return nv
+                    }()
+                    v.frame = rect
+                    v.configureTile(paper: paper, rect: rect)
+                }
+            }
+        }
+        for (key, v) in boardTiles where !keep.contains(key) {
+            v.removeFromSuperview()
+            boardTiles[key] = nil
+        }
+    }
+
     func scrollToPage(_ index: Int, animated: Bool = true) {
         guard document.content.pages.indices.contains(index) else { return }
-        let y = max(0, (document.pageOrigin(index).y - NoteDocument.topMargin / 2) * zoom)
+        let y = max(0, (document.pageOrigin(index).y - document.topMargin / 2) * zoom)
         let maxY = max(0, canvasView.contentSize.height - canvasView.bounds.height)
         canvasView.setContentOffset(CGPoint(x: canvasView.contentOffset.x, y: min(y, maxY)), animated: animated)
     }
@@ -303,10 +382,19 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         let visible = visibleDocRect.insetBy(dx: 0, dy: 40 / zoom)
         if visible.contains(docRect) { return }
         let z = zoom
-        var targetY = (docRect.midY * z) - canvasView.bounds.height * 0.4
-        let maxY = max(0, canvasView.contentSize.height - canvasView.bounds.height)
-        targetY = min(max(0, targetY), maxY)
-        canvasView.setContentOffset(CGPoint(x: canvasView.contentOffset.x, y: targetY), animated: animated)
+        var target = canvasView.contentOffset
+        if docRect.minY < visible.minY || docRect.maxY > visible.maxY {
+            let maxY = max(0, canvasView.contentSize.height - canvasView.bounds.height)
+            target.y = min(max(0, (docRect.midY * z) - canvasView.bounds.height * 0.4), maxY)
+        }
+        // Sideways too when it's off to one side (zoomed-in pages, wide boards).
+        if docRect.minX < visibleDocRect.minX || docRect.maxX > visibleDocRect.maxX {
+            let inset = canvasView.contentInset
+            let maxX = max(-inset.left, canvasView.contentSize.width - canvasView.bounds.width + inset.right)
+            let x = docRect.width * z < canvasView.bounds.width * 0.9 ? docRect.midX * z - canvasView.bounds.width / 2 : docRect.minX * z - 24
+            target.x = min(max(-inset.left, x), maxX)
+        }
+        canvasView.setContentOffset(target, animated: animated)
     }
 
     func isVisible(_ docRect: CGRect) -> Bool {
@@ -474,10 +562,15 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     }
 
     private func autoAddPageIfNeeded(_ rects: [CGRect]) {
+        if document.isFreeform {
+            // Boards always make room as you write toward the edge.
+            document.growBoardIfNeeded(toFit: rects)
+            return
+        }
         guard AppSettings.shared.autoAddPages else { return }
         let last = document.content.pages.count - 1
         let lastRect = document.pageRect(last)
-        if rects.contains(where: { $0.maxY > lastRect.maxY - 110 && $0.minY < lastRect.maxY + NoteDocument.pageGap }) {
+        if rects.contains(where: { $0.maxY > lastRect.maxY - 110 && $0.minY < lastRect.maxY + document.pageGap }) {
             document.appendPage()
         }
     }

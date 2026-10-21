@@ -72,6 +72,9 @@ final class CanvasActionExecutor {
     var env: RenderEnvironment { PageRenderer.environment(for: document) }
     var pageWidth: CGFloat { document.pageSize.width }
     var pageHeight: CGFloat { document.pageSize.height }
+    /// Where new things go by default and what they're kept inside: the page, or on a freeform
+    /// board the student's view (extended downward).
+    var area: CGRect { document.tutorWorkArea }
 
     func beginTurn() {
         turnRecord = TurnRecord()
@@ -144,6 +147,12 @@ final class CanvasActionExecutor {
     // MARK: Helpers
 
     func resolvePage(_ n: Int?) throws -> Int {
+        if document.isFreeform {
+            if let n, n != 1 {
+                throw ToolInputError(message: "This note is a freeform board: it has only page 1. Use page 1 with board coordinates; the board grows as needed.")
+            }
+            return 0
+        }
         guard let n else { return canvas?.currentPageIndex ?? 0 }
         let count = document.content.pages.count
         if n >= 1 && n <= count { return n - 1 }
@@ -224,7 +233,7 @@ final class CanvasActionExecutor {
             let f = NoteFonts.tutorFont(style: .handwriting, size: max(15, width * 5.5), hand: settings.tutorHand)
             let l = ElementRenderer.richLayout(label, font: f, width: 260, rich: true)
             var origin = labelAt ?? CGPoint(x: bounds.maxX + 6, y: bounds.midY - l.size.height / 2)
-            if origin.x + l.size.width > pageWidth - 8 { origin.x = max(8, bounds.minX - l.size.width - 8) }
+            if origin.x + l.size.width > area.maxX - 8 { origin.x = max(area.minX + 8, bounds.minX - l.size.width - 8) }
             let labelRect = CGRect(origin: origin, size: l.size)
             bounds = bounds.union(labelRect.insetBy(dx: -2, dy: -2))
             labelOffset = CGPoint(x: origin.x - bounds.minX, y: origin.y - bounds.minY)
@@ -290,7 +299,7 @@ final class CanvasActionExecutor {
                     liveFrames[toolID] = frame
                 } else {
                     let page = try resolvePage(args.int("page"))
-                    let x = args.cg("x") ?? 60, y = args.cg("y") ?? 60
+                    let x = args.cg("x") ?? area.minX + 60, y = args.cg("y") ?? area.minY + 60
                     let frame = layout.place(CGRect(x: x, y: y, width: max(size.width, 200), height: size.height), page: page).rect
                     let placed = CGRect(origin: frame.origin, size: size)
                     let e = CanvasElement(id: document.nextElementID(), pageIndex: page, frame: placed, author: .tutor, kind: .math(content))
@@ -324,12 +333,12 @@ final class CanvasActionExecutor {
     }
 
     private func writeFrame(_ args: ToolArgs, content: TextContent, fitted: Bool) throws -> CGRect {
-        var x = args.cg("x") ?? 60
-        let y = args.cg("y") ?? 60
+        var x = args.cg("x") ?? area.minX + 60
+        let y = args.cg("y") ?? area.minY + 60
         var width = min(736, max(80, args.cg("width") ?? 360))
-        if x + width > pageWidth - 12 {
-            let shrunk = pageWidth - 12 - x
-            if shrunk >= 160 { width = shrunk } else { x = max(12, pageWidth - 12 - width) }
+        if x + width > area.maxX - 12 {
+            let shrunk = area.maxX - 12 - x
+            if shrunk >= 160 { width = shrunk } else { x = max(area.minX + 12, area.maxX - 12 - width) }
         }
         if fitted { width = ElementRenderer.fittedTextWidth(content, author: .tutor, maxWidth: width, env: env) }
         let h = ElementRenderer.measureText(content, author: .tutor, width: width, env: env).height
@@ -424,7 +433,7 @@ final class CanvasActionExecutor {
                            action: ChatAction(symbol: "function", summary: "Worked math on p.\(page + 1)", elementIDs: [id], page: page))
         }
         let page = try resolvePage(args.int("page"))
-        let requested = CGRect(x: args.cg("x") ?? 60, y: args.cg("y") ?? 60, width: size.width, height: size.height)
+        let requested = CGRect(x: args.cg("x") ?? area.minX + 60, y: args.cg("y") ?? area.minY + 60, width: size.width, height: size.height)
         let (frame, nudged) = layout.place(requested, page: page)
         let e = addTutorElement(page: page, frame: frame, kind: .math(content))
         var result = "Wrote math \(e.id) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY)))."
@@ -628,9 +637,9 @@ final class CanvasActionExecutor {
         g.segments = segments
         g.guides = guides
         g.shadings = shades
-        let w = min(pageWidth - 32, max(200, args.cg("width") ?? 440))
-        let h = min(pageHeight - 40, max(160, args.cg("height") ?? 340))
-        let requested = CGRect(x: args.cg("x") ?? (pageWidth - w) / 2, y: args.cg("y") ?? 80, width: w, height: h)
+        let w = min(area.width - 32, max(200, args.cg("width") ?? 440))
+        let h = min(area.height - 40, max(160, args.cg("height") ?? 340))
+        let requested = CGRect(x: args.cg("x") ?? area.midX - w / 2, y: args.cg("y") ?? area.minY + 80, width: w, height: h)
         let (frame, nudged) = layout.place(requested, page: page)
         let e = addTutorElement(page: page, frame: frame, kind: .graph(g))
         let plot = ElementRenderer.graphPlotRect(frame, g)
@@ -662,8 +671,8 @@ final class CanvasActionExecutor {
                                openStart: i["open_start"]?.boolValue ?? false, openEnd: i["open_end"]?.boolValue ?? false,
                                colorHex: color(i["color"]?.stringValue))
         }
-        let w = min(pageWidth - 32, max(200, args.cg("width") ?? 520))
-        let requested = CGRect(x: args.cg("x") ?? (pageWidth - w) / 2, y: args.cg("y") ?? 100, width: w, height: 84)
+        let w = min(area.width - 32, max(200, args.cg("width") ?? 520))
+        let requested = CGRect(x: args.cg("x") ?? area.midX - w / 2, y: args.cg("y") ?? area.minY + 100, width: w, height: 84)
         let (frame, _) = layout.place(requested, page: page)
         let e = addTutorElement(page: page, frame: frame, kind: .numberLine(n))
         return Outcome(result: "Number line \(e.id) on page \(page + 1) at \(describe(frame)); value v sits at page x = \(Int(frame.minX + 16)) + (v − \(JSONValue.formatNumber(minV)))·\(String(format: "%.1f", (frame.width - 32) / CGFloat(maxV - minV))).",
@@ -675,9 +684,9 @@ final class CanvasActionExecutor {
         let rows = args.array("rows").map { row in (row.arrayValue ?? []).map { $0.stringValue ?? ($0.doubleValue.map(JSONValue.formatNumber) ?? "") } }
         guard !rows.isEmpty, rows.contains(where: { !$0.isEmpty }) else { throw ToolInputError(message: "rows must contain at least one row of cells.") }
         let t = TableContent(rows: rows, header: args.bool("header") ?? true)
-        let maxW = min(pageWidth - 32, args.cg("width") ?? 640)
+        let maxW = min(area.width - 32, args.cg("width") ?? 640)
         let size = ElementRenderer.tableSize(t, maxWidth: maxW)
-        let requested = CGRect(x: args.cg("x") ?? (pageWidth - size.width) / 2, y: args.cg("y") ?? 100, width: size.width, height: size.height)
+        let requested = CGRect(x: args.cg("x") ?? area.midX - size.width / 2, y: args.cg("y") ?? area.minY + 100, width: size.width, height: size.height)
         let (frame, _) = layout.place(requested, page: page)
         let e = addTutorElement(page: page, frame: frame, kind: .table(t))
         return Outcome(result: "Table \(e.id) on page \(page + 1) at \(describe(frame)).", isError: false,
@@ -691,14 +700,27 @@ final class CanvasActionExecutor {
         var q = QuestionContent(number: 0, prompt: prompt, marks: max(1, args.int("marks") ?? 1), promptHeight: 0,
                                 answer: answer, solution: solution, hint: args.string("hint"), topic: args.string("topic"),
                                 difficulty: args.string("difficulty"))
-        let width = pageWidth - 80
+        // A page-width card on pages; on a board, a comfortable card inside the student's view.
+        let width = document.isFreeform ? min(720, area.width - 80) : pageWidth - 80
         q.promptHeight = ElementRenderer.questionPromptHeight(q, width: width, env: env)
         let answerSpace = min(560, max(100, args.cg("answer_space") ?? 200))
         let height = q.promptHeight + answerSpace + 14
 
         var page: Int
         var y: CGFloat
-        if args.bool("new_page") == true {
+        if document.isFreeform {
+            page = 0
+            if let requestedY = args.cg("y") {
+                y = requestedY
+            } else if let free = layout.nextFreeY(page: 0, height: height) {
+                y = free
+            } else {
+                // Below everything in this part of the board; the board grows to fit.
+                let b = area
+                let bottom = layout.occupied(page: 0).filter { $0.maxX > b.minX && $0.minX < b.maxX }.map(\.maxY).max() ?? b.minY
+                y = bottom + 30
+            }
+        } else if args.bool("new_page") == true {
             document.appendPage()
             page = document.content.pages.count - 1
             y = 50
@@ -729,13 +751,13 @@ final class CanvasActionExecutor {
                 y = 50
             }
         }
-        if y + height > pageHeight - 20 {
+        if !document.isFreeform && y + height > pageHeight - 20 {
             document.appendPage()
             page = document.content.pages.count - 1
             y = 50
         }
         q.number = document.nextQuestionNumber()
-        let frame = CGRect(x: 40, y: y, width: width, height: height)
+        let frame = CGRect(x: area.minX + 40, y: y, width: width, height: height)
         let e = addTutorElement(page: page, frame: frame, kind: .question(q))
         let answerArea = CGRect(x: frame.minX + 14, y: frame.minY + q.promptHeight, width: frame.width - 28, height: answerSpace)
         return Outcome(result: "Added Q\(q.number) (\(e.id)) on page \(page + 1) at \(describe(frame)); answer area \(describe(answerArea)).",
@@ -785,7 +807,7 @@ final class CanvasActionExecutor {
             }
             markOrigin = CGPoint(x: x, y: y)
             if comment != nil {
-                commentRect = CGRect(x: x + 48, y: y, width: min(280, pageWidth - x - 60), height: 40)
+                commentRect = CGRect(x: x + 48, y: y, width: min(280, area.maxX - x - 60), height: 40)
             }
             summary = "Marked \(verdict.rawValue)"
         }
@@ -804,7 +826,7 @@ final class CanvasActionExecutor {
         }
         if let comment, var rect = commentRect {
             let content = TextContent(text: comment, style: .handwriting, fontSize: 18, colorHex: markColor, rich: true)
-            rect.size.width = max(140, min(rect.width, pageWidth - rect.minX - 12))
+            rect.size.width = max(140, min(rect.width, area.maxX - rect.minX - 12))
             let w = ElementRenderer.fittedTextWidth(content, author: .tutor, maxWidth: rect.width, env: env)
             let h = ElementRenderer.measureText(content, author: .tutor, width: w, env: env).height
             let requested = CGRect(x: rect.maxX - w, y: rect.minY, width: w, height: h)
@@ -828,7 +850,11 @@ final class CanvasActionExecutor {
         let page = try args.int("page").map { try resolvePage($0) } ?? e.pageIndex
         let x = try args.requireDouble("x"), y = try args.requireDouble("y")
         noteModified(e)
-        let frame = layout.clamp(CGRect(x: x, y: y, width: e.frame.width, height: e.frame.height))
+        let requested = CGRect(x: x, y: y, width: e.frame.width, height: e.frame.height)
+        // On a board anything on the board is fair game (it grows); pages keep things on the page.
+        let frame = document.isFreeform
+            ? requested.offsetBy(dx: max(0, 8 - requested.minX), dy: max(0, 8 - requested.minY))
+            : layout.clamp(requested)
         document.update(id, actionName: "Move") {
             $0.pageIndex = page
             $0.frame = frame
@@ -913,6 +939,10 @@ final class CanvasActionExecutor {
     }
 
     private func addPage(_ args: ToolArgs) throws -> Outcome {
+        if document.isFreeform {
+            let below = layout.occupied(page: 0).map(\.maxY).max() ?? area.minY
+            throw ToolInputError(message: "Freeform boards have no pages. Put new work below what's there (around y \(Int(below + 40))) or beside it; the board grows automatically.")
+        }
         let paper: PaperStyle? = args.string("paper").map { name in
             let pattern: PaperPattern
             switch name {

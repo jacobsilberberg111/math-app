@@ -47,6 +47,9 @@ final class NoteDocument {
     @ObservationIgnored private var imageCache: [String: UIImage] = [:]
     @ObservationIgnored private var pdfCache: [String: CGPDFDocument] = [:]
     @ObservationIgnored private(set) var isDirty = false
+    /// Freeform boards: the part of the board on screen (board coordinates). Kept up to date by
+    /// the canvas so the tutor works where the student is looking.
+    @ObservationIgnored var visibleBoardRect: CGRect?
 
     init(meta: NoteMeta, content: NoteContent, drawing: PKDrawing) {
         self.id = meta.id
@@ -100,6 +103,8 @@ final class NoteDocument {
         isDirty = false
         meta.pageCount = content.pages.count
         meta.hasAudio = !content.recordings.isEmpty
+        meta.layout = content.layout
+        meta.openQuestions = content.elements.filter { if case .question(let q) = $0.kind { return q.status == .open }; return false }.count
         let folder = self.folder
         let contentData = try? Storage.encoder.encode(content)
         let metaData = try? Storage.encoder.encode(meta)
@@ -115,16 +120,23 @@ final class NoteDocument {
 
     // MARK: Geometry
 
+    var isFreeform: Bool { content.layout == .freeform }
+
+    // A board fills the whole canvas: no margins around it and no gaps (it has one page).
+    var topMargin: CGFloat { isFreeform ? 0 : NoteDocument.topMargin }
+    var sideMargin: CGFloat { isFreeform ? 0 : NoteDocument.sideMargin }
+    var pageGap: CGFloat { isFreeform ? 0 : NoteDocument.pageGap }
+    var footerHeight: CGFloat { isFreeform ? 0 : NoteDocument.footerHeight }
+
     var pageSize: CGSize { CGSize(width: content.pageSize.width, height: content.pageSize.height) }
 
     var documentSize: CGSize {
-        let h = NoteDocument.topMargin + CGFloat(content.pages.count) * (pageSize.height + NoteDocument.pageGap) + NoteDocument.footerHeight
-        return CGSize(width: pageSize.width + 2 * NoteDocument.sideMargin, height: h)
+        let h = topMargin + CGFloat(content.pages.count) * (pageSize.height + pageGap) + footerHeight
+        return CGSize(width: pageSize.width + 2 * sideMargin, height: h)
     }
 
     func pageOrigin(_ index: Int) -> CGPoint {
-        CGPoint(x: NoteDocument.sideMargin,
-                y: NoteDocument.topMargin + CGFloat(index) * (pageSize.height + NoteDocument.pageGap))
+        CGPoint(x: sideMargin, y: topMargin + CGFloat(index) * (pageSize.height + pageGap))
     }
 
     func pageRect(_ index: Int) -> CGRect {
@@ -142,9 +154,52 @@ final class NoteDocument {
 
     /// The page under a document point (clamped to the nearest page).
     func pageIndex(at docPoint: CGPoint) -> Int {
-        let stride = pageSize.height + NoteDocument.pageGap
-        let raw = Int(floor((docPoint.y - NoteDocument.topMargin + NoteDocument.pageGap / 2) / stride))
+        let stride = pageSize.height + pageGap
+        let raw = Int(floor((docPoint.y - topMargin + pageGap / 2) / stride))
         return max(0, min(content.pages.count - 1, raw))
+    }
+
+    // MARK: Freeform board
+
+    static let boardInitialSize = PageSize(width: 2048, height: 2048)
+    static let boardGrowStep: CGFloat = 1024
+    static let boardMaxSide: CGFloat = 16_384
+    /// Free board kept to the right of and below everything, so there's always room to keep going.
+    static let boardEdgeRoom: CGFloat = 640
+
+    /// Grows a freeform board so the given board rects keep `boardEdgeRoom` of free space to the
+    /// right and below. Boards only grow right and down; the top-left corner is the origin.
+    func growBoardIfNeeded(toFit rects: [CGRect]) {
+        guard isFreeform, !rects.isEmpty else { return }
+        var w = content.pageSize.width, h = content.pageSize.height
+        let step = NoteDocument.boardGrowStep, maxSide = NoteDocument.boardMaxSide
+        for r in rects where !r.isNull && r.width.isFinite && r.height.isFinite {
+            if r.maxX + NoteDocument.boardEdgeRoom > w { w = min(maxSide, (ceil((r.maxX + NoteDocument.boardEdgeRoom) / step) * step)) }
+            if r.maxY + NoteDocument.boardEdgeRoom > h { h = min(maxSide, (ceil((r.maxY + NoteDocument.boardEdgeRoom) / step) * step)) }
+        }
+        guard w > content.pageSize.width || h > content.pageSize.height else { return }
+        content.pageSize = PageSize(width: max(w, content.pageSize.width), height: max(h, content.pageSize.height))
+        canvas?.documentDidChangePages()
+        markDirty()
+    }
+
+    /// Everything on a freeform board (ink and elements), in board coordinates; nil when empty.
+    var boardContentBounds: CGRect? {
+        var r = CGRect.null
+        for s in drawing.strokes { r = r.union(s.renderBounds) }
+        for e in content.elements { r = r.union(e.frame) }
+        return r.isNull ? nil : r
+    }
+
+    /// Where the tutor should place new work. Pages: the whole page. Boards: the part the student
+    /// is looking at, extended downward so longer working still has room (the board grows to fit).
+    var tutorWorkArea: CGRect {
+        guard isFreeform else { return CGRect(origin: .zero, size: pageSize) }
+        let board = CGRect(origin: .zero, size: pageSize)
+        var v = visibleBoardRect ?? CGRect(x: 0, y: 0, width: 1000, height: 1200)
+        v = v.intersection(board)
+        if v.isNull || v.width < 200 || v.height < 200 { v = CGRect(x: 0, y: 0, width: min(1000, board.width), height: min(1200, board.height)) }
+        return CGRect(x: v.minX, y: v.minY, width: v.width, height: min(NoteDocument.boardMaxSide - v.minY, v.height + 1400))
     }
 
     func pagePoint(fromDoc p: CGPoint) -> (page: Int, point: CGPoint) {
@@ -190,6 +245,7 @@ final class NoteDocument {
     func add(_ element: CanvasElement, reveal: RevealStyle = .none, actionName: String? = nil) {
         content.elements.append(element)
         canvas?.documentDidAddElement(element, reveal: reveal)
+        growBoardIfNeeded(toFit: [element.frame])
         undoManager.registerUndo(withTarget: self) { doc in
             doc.remove(element.id, actionName: actionName)
         }
@@ -205,6 +261,7 @@ final class NoteDocument {
         guard after != before else { return }
         content.elements[idx] = after
         canvas?.documentDidUpdateElement(after)
+        growBoardIfNeeded(toFit: [after.frame])
         if registerUndo {
             undoManager.registerUndo(withTarget: self) { doc in
                 doc.update(id, actionName: actionName) { $0 = before }

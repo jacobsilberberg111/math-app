@@ -5,12 +5,14 @@ import UniformTypeIdentifiers
 /// Loads a note and shows the editor.
 struct NoteEditorContainer: View {
     let meta: NoteMeta
+    /// Opens another note in place of this one (the editor has already closed this one).
+    var onSwitchNote: ((NoteMeta) -> Void)?
     @State private var model: EditorModel?
 
     var body: some View {
         Group {
             if let model {
-                NoteEditorView(model: model)
+                NoteEditorView(model: model, onSwitchNote: onSwitchNote)
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -33,6 +35,7 @@ struct NoteEditorContainer: View {
 
 struct NoteEditorView: View {
     @Bindable var model: EditorModel
+    var onSwitchNote: ((NoteMeta) -> Void)?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(LibraryStore.self) private var library
@@ -50,7 +53,8 @@ struct NoteEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             EditorTopBar(model: model, onClose: close, onInsertPhoto: { showPhotoPicker = true },
-                         onImportPDF: { showPDFImporter = true }, onExport: export)
+                         onImportPDF: { showPDFImporter = true }, onExport: export,
+                         onSwitchNote: onSwitchNote.map { open in { (meta: NoteMeta) in switchTo(meta, open) } })
             EditorToolStrip(model: model)
             HStack(spacing: 0) {
                 canvasArea
@@ -138,6 +142,10 @@ struct NoteEditorView: View {
                     if model.audio.isRecording || (model.audio.showsPlayer && model.audio.activeRecording != nil) {
                         AudioBar(audio: model.audio)
                     }
+                    if model.document.isFreeform && !model.showTutor {
+                        BoardTutorBar(model: model)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
                 .padding(.bottom, 18)
                 .padding(.horizontal, 16)
@@ -152,8 +160,8 @@ struct NoteEditorView: View {
         switch s {
         case .stuck(_, let elementID):
             if let e = model.document.element(elementID) { model.tutor.revealHint(for: e) }
-        case .offscreen(let page):
-            model.canvas?.scrollToPage(page)
+        case .offscreen(let page, let docRect, let onBoard):
+            if onBoard { model.canvas?.scrollToReveal(docRect) } else { model.canvas?.scrollToPage(page) }
         }
         model.tutor.dismissSuggestion()
     }
@@ -169,6 +177,11 @@ struct NoteEditorView: View {
     private func close() {
         model.close(library: library)
         dismiss()
+    }
+
+    private func switchTo(_ meta: NoteMeta, _ open: (NoteMeta) -> Void) {
+        model.close(library: library)
+        open(meta)
     }
 }
 

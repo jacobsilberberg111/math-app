@@ -28,8 +28,8 @@ enum TutorTools {
         ["name": .string(name), "description": .string(description), "input_schema": schema, "eager_input_streaming": true]
     }
 
-    static let page = prop("integer", "Page number (1-based). Use pages.count + 1 to start a new page.")
-    static let x = prop("number", "Left edge in page points (0–816).")
+    static let page = prop("integer", "Page number (1-based). Use pages.count + 1 to start a new page. Freeform boards have only page 1.")
+    static let x = prop("number", "Left edge in page points (0–816 on pages; board coordinates on a freeform board).")
     static let y = prop("number", "Top edge in page points (0 at the top of the page).")
     static let color: JSONValue = ["type": "string", "enum": colorEnum, "description": "Ink colour."]
 
@@ -201,7 +201,7 @@ enum TutorTools {
                     required: ["page", "x", "y", "width", "height"])),
 
         tool("add_page",
-             "Add a blank page (for example before a new set of questions or a fresh worked example). Returns its page number.",
+             "Add a blank page (for example before a new set of questions or a fresh worked example). Returns its page number. Not available on freeform boards, which grow instead.",
              object([
                 ("after_page", prop("integer", "Insert after this page (default: at the end).")),
                 ("paper", enumProp(["blank", "ruled", "grid", "dots", "graph"], "Paper style (default: same as the note).")),

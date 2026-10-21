@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum LibrarySelection: Hashable {
+    case home
     case all
     case unfiled
     case subject(UUID)
@@ -10,7 +11,7 @@ enum LibrarySelection: Hashable {
 struct LibraryView: View {
     @Environment(LibraryStore.self) private var library
     @EnvironmentObject var settings: AppSettings
-    @State private var selection: LibrarySelection? = .all
+    @State private var selection: LibrarySelection? = .home
     @State private var search = ""
     @State private var sort: LibrarySort = .modified
     @State private var openNote: NoteMeta?
@@ -31,15 +32,16 @@ struct LibraryView: View {
     }
 
     var visibleNotes: [NoteMeta] {
-        switch selection ?? .all {
-        case .all: return library.notes(in: nil, search: search, sort: sort)
+        switch selection ?? .home {
+        case .home, .all: return library.notes(in: nil, search: search, sort: sort)
         case .unfiled: return library.notes(in: nil, unfiledOnly: true, search: search, sort: sort)
         case .subject(let id): return library.notes(in: id, search: search, sort: sort)
         }
     }
 
     var title: String {
-        switch selection ?? .all {
+        switch selection ?? .home {
+        case .home: return HomeView.greeting
         case .all: return "All Notes"
         case .unfiled: return "Unfiled"
         case .subject(let id): return library.subject(id)?.name ?? "Notes"
@@ -51,14 +53,22 @@ struct LibraryView: View {
             sidebar
         } detail: {
             NavigationStack {
-                grid
-                    .navigationTitle(title)
-                    .searchable(text: $search, prompt: "Search titles and handwriting")
-                    .toolbar { toolbar }
+                Group {
+                    if (selection ?? .home) == .home && search.trimmed.isEmpty {
+                        HomeView(open: open, newNotebook: { createNote(defaultPaper) }, newBoard: { createBoard(title: nil) },
+                                 askTutor: { createBoard(title: "Question") }, importPDF: { showPDFImporter = true },
+                                 showAll: { selection = .all }, showSubject: { selection = .subject($0) })
+                    } else {
+                        grid
+                    }
+                }
+                .navigationTitle(title)
+                .searchable(text: $search, prompt: "Search titles and handwriting")
+                .toolbar { toolbar }
             }
         }
         .fullScreenCover(item: $openNote) { meta in
-            NoteEditorContainer(meta: meta)
+            NoteEditorContainer(meta: meta, onSwitchNote: switchTo)
                 .environment(library)
                 .environmentObject(settings)
         }
@@ -67,7 +77,7 @@ struct LibraryView: View {
         .fileImporter(isPresented: $showPDFImporter, allowedContentTypes: [.pdf]) { result in
             guard case .success(let url) = result else { return }
             if let meta = library.createNote(fromPDF: url, subjectID: currentSubjectID) {
-                openNote = meta
+                open(meta)
             } else {
                 importFailed = true
             }
@@ -97,7 +107,8 @@ struct LibraryView: View {
             Text("The note, its recordings and its tutor conversation will be deleted.")
         }
         .onAppear {
-            DemoDirector.shared.libraryAppeared(library: library) { meta in openNote = meta }
+            DemoDirector.shared.libraryAppeared(library: library, open: { open($0) }, close: { openNote = nil },
+                                                newBoard: { createBoard(title: $0) })
             if !settings.hasSeenOnboarding { showOnboarding = true }
         }
     }
@@ -107,6 +118,7 @@ struct LibraryView: View {
     private var sidebar: some View {
         List(selection: $selection) {
             Section {
+                Label("Home", systemImage: "house").tag(LibrarySelection.home)
                 Label("All Notes", systemImage: "tray.full").tag(LibrarySelection.all)
                     .badge(library.notes.count)
                 Label("Unfiled", systemImage: "tray").tag(LibrarySelection.unfiled)
@@ -137,7 +149,7 @@ struct LibraryView: View {
                         } label: { Label("Colour", systemImage: "paintpalette") }
                         Button(role: .destructive) {
                             library.deleteSubject(subject)
-                            if selection == .subject(subject.id) { selection = .all }
+                            if selection == .subject(subject.id) { selection = .home }
                         } label: { Label("Delete Subject", systemImage: "trash") }
                     }
                 }
@@ -167,8 +179,12 @@ struct LibraryView: View {
                     Text(search.isEmpty ? "Create a note to start writing, or import a PDF worksheet." : "Nothing matches “\(search)”.")
                 } actions: {
                     if search.isEmpty {
-                        Button("New Note") { createNote(PaperStyle(pattern: settings.defaultPattern, color: settings.defaultPaperColor)) }
-                            .buttonStyle(.borderedProminent)
+                        HStack {
+                            Button("New Notebook") { createNote(defaultPaper) }
+                                .buttonStyle(.borderedProminent)
+                            Button("New Board") { createBoard(title: nil) }
+                                .buttonStyle(.bordered)
+                        }
                     }
                 }
                 .padding(.top, 80)
@@ -176,7 +192,7 @@ struct LibraryView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 26)], spacing: 30) {
                 ForEach(visibleNotes) { meta in
                     NoteCard(meta: meta, subject: library.subject(meta.subjectID))
-                        .onTapGesture { openNote = meta }
+                        .onTapGesture { open(meta) }
                         .contextMenu { contextMenu(for: meta) }
                 }
             }
@@ -202,31 +218,59 @@ struct LibraryView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Menu {
-                Picker("Sort", selection: $sort) {
-                    ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
+            if selection != .home {
+                Menu {
+                    Picker("Sort", selection: $sort) {
+                        ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
                 }
-            } label: {
-                Image(systemName: "arrow.up.arrow.down")
             }
             Button { showPDFImporter = true } label: { Label("Import PDF", systemImage: "doc.badge.arrow.up") }
             Menu {
-                ForEach([PaperPattern.ruled, .grid, .dots, .blank, .graph, .cornell]) { p in
-                    Button { createNote(PaperStyle(pattern: p, color: settings.defaultPaperColor)) } label: { Text(p.title) }
+                Button { createBoard(title: nil) } label: { Label("Freeform Board", systemImage: "scribble.variable") }
+                Section("Notebook") {
+                    ForEach([PaperPattern.ruled, .grid, .dots, .blank, .graph, .cornell]) { p in
+                        Button { createNote(PaperStyle(pattern: p, color: settings.defaultPaperColor)) } label: { Text(p.title) }
+                    }
                 }
             } label: {
                 Label("New Note", systemImage: "square.and.pencil")
             } primaryAction: {
-                createNote(PaperStyle(pattern: settings.defaultPattern, color: settings.defaultPaperColor))
+                createNote(defaultPaper)
             }
         }
     }
 
-    private func createNote(_ paper: PaperStyle) {
+    private var defaultPaper: PaperStyle { PaperStyle(pattern: settings.defaultPattern, color: settings.defaultPaperColor) }
+
+    private static var stamp: String {
         let f = DateFormatter()
         f.dateFormat = "MMM d, h:mm a"
-        let meta = library.createNote(title: "Note \(f.string(from: Date()))", subjectID: currentSubjectID, paper: paper)
-        openNote = meta
+        return f.string(from: Date())
+    }
+
+    private func createNote(_ paper: PaperStyle) {
+        open(library.createNote(title: "Note \(LibraryView.stamp)", subjectID: currentSubjectID, paper: paper))
+    }
+
+    private func createBoard(title: String?) {
+        open(library.createNote(title: "\(title ?? "Board") \(LibraryView.stamp)", subjectID: currentSubjectID, paper: defaultPaper, layout: .freeform))
+    }
+
+    /// Every way into a note goes through here, so Home knows what was opened last.
+    private func open(_ meta: NoteMeta) {
+        openNote = library.markOpened(meta)
+    }
+
+    /// From the editor's recent-notes menu: the editor has closed its note; swap the cover.
+    private func switchTo(_ meta: NoteMeta) {
+        openNote = nil
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            open(meta)
+        }
     }
 
     static let colourNames = ["#5B5BD6": "Indigo", "#E5484D": "Red", "#30A46C": "Green", "#F76B15": "Orange",
@@ -265,6 +309,7 @@ struct NoteCard: View {
                 .shadow(color: .black.opacity(0.1), radius: 6, y: 3)
 
                 HStack(spacing: 4) {
+                    if meta.isFreeform { badge("scribble.variable") }
                     if meta.hasTutorSession { badge("sparkles") }
                     if meta.hasAudio { badge("waveform") }
                 }
@@ -279,7 +324,7 @@ struct NoteCard: View {
                         Text("·")
                     }
                     Text(meta.modifiedAt.shortRelative)
-                    Text("· \(meta.pageCount) pg")
+                    Text(meta.isFreeform ? "· Board" : "· \(meta.pageCount) pg")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

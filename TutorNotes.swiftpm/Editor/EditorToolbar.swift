@@ -11,7 +11,10 @@ struct EditorTopBar: View {
     var onInsertPhoto: () -> Void
     var onImportPDF: () -> Void
     var onExport: () -> Void
+    /// Closes this note and opens another (from the back button's recent notes).
+    var onSwitchNote: ((NoteMeta) -> Void)?
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(LibraryStore.self) private var library
     @State private var editingTitle = false
     @State private var titleDraft = ""
     @FocusState private var titleFocused: Bool
@@ -19,14 +22,35 @@ struct EditorTopBar: View {
     /// Narrow windows fold Pages and Export into the insert menu so the bar still fits.
     private var compact: Bool { sizeClass == .compact }
 
+    private var isBoard: Bool { model.document.isFreeform }
+
+    /// Other notes to jump to, most recent first.
+    private var recentNotes: [NoteMeta] {
+        Array(library.recentNotes.filter { $0.id != model.document.id }.prefix(8))
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            Button(action: onClose) {
+            // Tap goes back home; press and hold to jump straight to another recent note.
+            Menu {
+                if let onSwitchNote, !recentNotes.isEmpty {
+                    Section("Recent Notes") {
+                        ForEach(recentNotes) { meta in
+                            Button { onSwitchNote(meta) } label: {
+                                Label(meta.title, systemImage: meta.isFreeform ? "scribble.variable" : "doc.text")
+                            }
+                        }
+                    }
+                }
+                Button(action: onClose) { Label("Home", systemImage: "house") }
+            } label: {
                 Image(systemName: "chevron.backward")
                     .font(.system(size: 17, weight: .semibold))
                     .frame(width: 40, height: 40)
+            } primaryAction: {
+                onClose()
             }
-            .accessibilityLabel("Library")
+            .accessibilityLabel("Back to Home")
 
             if editingTitle {
                 TextField("Title", text: $titleDraft)
@@ -48,7 +72,7 @@ struct EditorTopBar: View {
                             .font(.system(size: 17, weight: .semibold))
                             .lineLimit(1)
                             .foregroundStyle(.primary)
-                        Text("Page \(model.currentPage + 1) of \(model.pageCount)")
+                        Text(isBoard ? "Freeform board" : "Page \(model.currentPage + 1) of \(model.pageCount)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -63,18 +87,31 @@ struct EditorTopBar: View {
                 BarButton(symbol: "arrow.uturn.forward", label: "Redo", enabled: model.canRedo) { model.redo() }
                 if !compact {
                     Divider().frame(height: 22).padding(.horizontal, 4)
-                    BarButton(symbol: "square.grid.2x2", label: "Pages") { model.showPages = true }
+                    if isBoard {
+                        BarButton(symbol: "arrow.up.left.and.arrow.down.right", label: "Show Whole Board") { model.canvas?.zoomToShowAll() }
+                    } else {
+                        BarButton(symbol: "square.grid.2x2", label: "Pages") { model.showPages = true }
+                    }
                 }
+                if isBoard { BoardLinesMenu(document: model.document) }
                 Menu {
                     Button { onInsertPhoto() } label: { Label("Photo", systemImage: "photo") }
-                    Button { onImportPDF() } label: { Label("PDF Pages", systemImage: "doc.richtext") }
+                    if !isBoard {
+                        Button { onImportPDF() } label: { Label("PDF Pages", systemImage: "doc.richtext") }
+                    }
                     Button { model.selectTool(.text) } label: { Label("Text Box", systemImage: "textformat") }
-                    Divider()
-                    Button { model.document.appendPage(); model.canvas?.scrollToPage(model.pageCount - 1) } label: { Label("New Page", systemImage: "doc.badge.plus") }
-                    Button { model.showPaper = true } label: { Label("Paper Style", systemImage: "square.grid.3x3") }
+                    if !isBoard {
+                        Divider()
+                        Button { model.document.appendPage(); model.canvas?.scrollToPage(model.pageCount - 1) } label: { Label("New Page", systemImage: "doc.badge.plus") }
+                        Button { model.showPaper = true } label: { Label("Paper Style", systemImage: "square.grid.3x3") }
+                    }
                     if compact {
                         Divider()
-                        Button { model.showPages = true } label: { Label("Pages", systemImage: "square.grid.2x2") }
+                        if isBoard {
+                            Button { model.canvas?.zoomToShowAll() } label: { Label("Show Whole Board", systemImage: "arrow.up.left.and.arrow.down.right") }
+                        } else {
+                            Button { model.showPages = true } label: { Label("Pages", systemImage: "square.grid.2x2") }
+                        }
                         Button { onExport() } label: { Label("Export", systemImage: "square.and.arrow.up") }
                     }
                 } label: {
@@ -102,6 +139,45 @@ struct EditorTopBar: View {
             model.document.meta.title = t
             model.document.markDirty()
         }
+    }
+}
+
+/// Switches a freeform board's background lines (and paper colour) in one tap.
+struct BoardLinesMenu: View {
+    let document: NoteDocument
+
+    private var paper: PaperStyle { document.content.pages.first?.paper ?? .standard }
+
+    var body: some View {
+        Menu {
+            Section("Lines") {
+                ForEach(PaperPattern.boardPatterns) { p in
+                    Button {
+                        document.setPaper(PaperStyle(pattern: p, color: paper.color), forPage: nil)
+                    } label: {
+                        Label(p.title, systemImage: p == paper.pattern ? "checkmark" : p.symbol)
+                    }
+                }
+            }
+            Menu {
+                ForEach(PaperColor.allCases) { c in
+                    Button {
+                        document.setPaper(PaperStyle(pattern: paper.pattern, color: c), forPage: nil)
+                    } label: {
+                        Label {
+                            Text(c.rawValue.capitalized)
+                        } icon: {
+                            Image(uiImage: LibraryView.swatch(c.hex, current: c == paper.color))
+                        }
+                    }
+                }
+            } label: { Label("Paper Colour", systemImage: "paintpalette") }
+        } label: {
+            Image(systemName: paper.pattern.symbol)
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 40, height: 40)
+        }
+        .accessibilityLabel("Background lines")
     }
 }
 

@@ -48,6 +48,7 @@ final class PageBackgroundView: UIView {
     private var pdfView: PDFTiledView?
     private let numberLabel = UILabel()
     private(set) var configuredPage: Page?
+    private var configuredTileRect: CGRect?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -110,6 +111,40 @@ final class PageBackgroundView: UIView {
             patternView.alpha = 1
         }
     }
+
+    /// One tile of a freeform board: paper and pattern for `rect` (board coordinates), with no
+    /// page shadow or number so neighbouring tiles read as one sheet.
+    func configureTile(paper: PaperStyle, rect: CGRect) {
+        let page = Page(id: Page.boardTileID, paper: paper)
+        let sameStyle = configuredPage?.paper == paper && configuredTileRect == rect
+        configuredPage = page
+        configuredTileRect = rect
+        layer.shadowOpacity = 0
+        numberLabel.isHidden = true
+        pdfView?.removeFromSuperview()
+        pdfView = nil
+        patternView.alpha = 1
+        pdfContainer.frame = CGRect(origin: .zero, size: rect.size)
+        patternView.frame = CGRect(origin: .zero, size: rect.size)
+        if sameStyle { return }
+        backgroundColor = UIColor(hex: paper.color.hex)
+        let paths = PaperRenderer.boardPatternPaths(paper.pattern, rect: rect)
+        let lineColor = PaperRenderer.lineColor(paper)
+        light.path = paths.light
+        light.strokeColor = lineColor.withAlphaComponent(0.9).cgColor
+        light.lineWidth = 0.75
+        strong.path = paths.strong
+        strong.strokeColor = lineColor.cgColor
+        strong.lineWidth = 1.3
+        dots.path = paths.dots
+        dots.fillColor = lineColor.cgColor
+        accent.path = nil
+    }
+}
+
+extension Page {
+    /// Placeholder id for the `Page` a board tile is configured with (tiles aren't pages).
+    static let boardTileID = UUID(uuidString: "00000000-0000-0000-0000-00000000B0A2")!
 }
 
 // MARK: - Elements

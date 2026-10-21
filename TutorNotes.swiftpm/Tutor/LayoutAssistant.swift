@@ -9,11 +9,20 @@ struct LayoutAssistant {
 
     var pageSize: CGSize { doc.pageSize }
 
+    /// Where things may go (page coordinates): the whole page, or on a freeform board the part the
+    /// student is looking at (extended downward).
+    var bounds: CGRect { doc.tutorWorkArea }
+
+    /// On a board, only what's in or near the work area matters (a board can hold a lot).
+    private var relevantArea: CGRect? { doc.isFreeform ? bounds.insetBy(dx: -240, dy: -240) : nil }
+
     /// Bounding boxes of the student's ink, merged into readable clusters (page coordinates).
     func inkClusters(page: Int, gap: CGFloat = 14) -> [CGRect] {
         let origin = doc.pageOrigin(page)
         var rects = doc.strokes(onPage: page).map { $0.renderBounds.offsetBy(dx: -origin.x, dy: -origin.y) }
-        rects = rects.filter { $0.width < pageSize.width * 1.5 && $0.height < pageSize.height * 1.5 }
+        if let area = relevantArea { rects = rects.filter { $0.intersects(area) } }
+        let limit = doc.isFreeform ? CGSize(width: 2400, height: 2400) : pageSize
+        rects = rects.filter { $0.width < limit.width * 1.5 && $0.height < limit.height * 1.5 }
         guard !rects.isEmpty else { return [] }
         var merged = true
         while merged {
@@ -36,7 +45,8 @@ struct LayoutAssistant {
     /// where marks, hints and feedback belong (the student's ink in it is still counted).
     func occupied(page: Int, excluding: Set<String> = [], answerAreasFree: Bool = false) -> [CGRect] {
         var rects = inkClusters(page: page)
-        for e in doc.elements(onPage: page) where !excluding.contains(e.id) {
+        let area = relevantArea
+        for e in doc.elements(onPage: page) where !excluding.contains(e.id) && (area == nil || e.frame.intersects(area!)) {
             switch e.kind {
             case .ink:
                 continue // marks may overlap freely
@@ -59,10 +69,11 @@ struct LayoutAssistant {
     }
 
     func clamp(_ r: CGRect) -> CGRect {
+        let b = bounds
         var c = r
-        c.size.width = min(c.width, pageSize.width - 16)
-        c.origin.x = max(8, min(c.minX, pageSize.width - c.width - 8))
-        c.origin.y = max(8, min(c.minY, pageSize.height - min(c.height, pageSize.height - 16) - 8))
+        c.size.width = min(c.width, b.width - 16)
+        c.origin.x = max(b.minX + 8, min(c.minX, b.maxX - c.width - 8))
+        c.origin.y = max(b.minY + 8, min(c.minY, b.maxY - min(c.height, b.height - 16) - 8))
         return c
     }
 
@@ -72,21 +83,22 @@ struct LayoutAssistant {
         let rect = clamp(r)
         let occ = occupied(page: page, excluding: excluding, answerAreasFree: true)
         if !collides(rect, with: occ) { return (rect, false) }
+        let b = bounds
         var dy: CGFloat = 12
-        while rect.maxY + dy < pageSize.height - 12 {
+        while rect.maxY + dy < b.maxY - 12 {
             let c = rect.offsetBy(dx: 0, dy: dy)
             if !collides(c, with: occ) { return (c, true) }
             dy += 12
         }
         // Right-hand column at the requested height.
-        let rightX = pageSize.width - rect.width - 24
+        let rightX = b.maxX - rect.width - 24
         if rightX > rect.minX + 40 {
             var c = rect
             c.origin.x = rightX
             if !collides(c, with: occ) { return (c, true) }
         }
         dy = 12
-        while rect.minY - dy > 12 {
+        while rect.minY - dy > b.minY + 12 {
             let c = rect.offsetBy(dx: 0, dy: -dy)
             if !collides(c, with: occ) { return (c, true) }
             dy += 12
@@ -96,22 +108,25 @@ struct LayoutAssistant {
 
     /// Top y of the first full-width free band of at least `height` below all content, or nil.
     func nextFreeY(page: Int, height: CGFloat, from minY: CGFloat = 40) -> CGFloat? {
-        let occ = occupied(page: page)
-        let bottom = occ.map(\.maxY).max() ?? 0
-        let y = max(minY, bottom + 24)
-        return y + height <= pageSize.height - 30 ? y : nil
+        let b = bounds
+        // On a board, only what's in this column of the board counts as "above".
+        let occ = occupied(page: page).filter { !doc.isFreeform || ($0.maxX > b.minX && $0.minX < b.maxX) }
+        let bottom = occ.map(\.maxY).max() ?? b.minY
+        let y = max(b.minY + minY, bottom + 24)
+        return y + height <= b.maxY - 30 ? y : nil
     }
 
     /// Vertical bands with nothing in them (full width), for describing free space to the tutor.
     func freeBands(page: Int, minHeight: CGFloat = 70) -> [(CGFloat, CGFloat)] {
-        let occ = occupied(page: page).sorted { $0.minY < $1.minY }
+        let b = bounds
+        let occ = occupied(page: page).filter { $0.maxY > b.minY && $0.minY < b.maxY }.sorted { $0.minY < $1.minY }
         var bands: [(CGFloat, CGFloat)] = []
-        var cursor: CGFloat = 30
+        var cursor: CGFloat = b.minY + 30
         for r in occ {
             if r.minY - cursor >= minHeight { bands.append((cursor, r.minY - 8)) }
             cursor = max(cursor, r.maxY + 8)
         }
-        let end = pageSize.height - 30
+        let end = b.maxY - 30
         if end - cursor >= minHeight { bands.append((cursor, end)) }
         return bands
     }

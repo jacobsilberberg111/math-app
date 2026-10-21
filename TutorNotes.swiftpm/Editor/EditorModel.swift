@@ -36,6 +36,8 @@ final class EditorModel: CanvasHost {
     var toast: String?
     var palettePresented = false
     var pendingFocus: (page: Int, rect: CGRect)?
+    /// Asks a board's floating tutor bar to take keyboard focus (it resets this).
+    var focusBoardBar = false
     @ObservationIgnored private var toastTask: Task<Void, Never>?
 
     init(document: NoteDocument) {
@@ -93,7 +95,12 @@ final class EditorModel: CanvasHost {
     func askAboutRegion(_ request: QuickMenuRequest) {
         pendingFocus = (request.page, request.rect)
         quickMenu = nil
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { showTutor = true }
+        if document.isFreeform && !showTutor {
+            // On a board you ask from the floating bar and keep working on the canvas.
+            focusBoardBar = true
+        } else {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { showTutor = true }
+        }
     }
 
     func dismissQuickMenu() {
@@ -107,7 +114,7 @@ final class EditorModel: CanvasHost {
     // would still invalidate every view that reads it.
     func canvasVisiblePageChanged(_ page: Int) {
         if currentPage != page { currentPage = page }
-        if case .offscreen(let p) = tutor.suggestion, p == page { tutor.dismissSuggestion() }
+        if case .offscreen(let p, _, false) = tutor.suggestion, p == page { tutor.dismissSuggestion() }
     }
 
     func canvasStudentWrote(docRects: [CGRect]) {
@@ -185,7 +192,7 @@ final class EditorModel: CanvasHost {
     }
 
     func canvasOffscreenTutorEdit(page: Int, docRect: CGRect) {
-        tutor.suggestion = .offscreen(page: page)
+        tutor.suggestion = .offscreen(page: page, docRect: docRect, onBoard: document.isFreeform)
     }
 
     // MARK: Lifecycle

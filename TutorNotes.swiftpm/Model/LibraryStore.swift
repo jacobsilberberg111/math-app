@@ -99,16 +99,41 @@ final class LibraryStore {
     // MARK: Notes
 
     @discardableResult
-    func createNote(title: String, subjectID: UUID?, paper: PaperStyle) -> NoteMeta {
+    func createNote(title: String, subjectID: UUID?, paper: PaperStyle, layout: NoteLayout = .pages) -> NoteMeta {
+        var paper = paper
         var meta = NoteMeta(title: title, subjectID: subjectID, paper: paper)
         meta.pageCount = 1
         var content = NoteContent()
+        if layout == .freeform {
+            // Cornell needs page edges; a board gets a plain grid instead.
+            if !PaperPattern.boardPatterns.contains(paper.pattern) { paper.pattern = .grid }
+            meta.paper = paper
+            meta.layout = .freeform
+            content.layout = .freeform
+            content.pageSize = NoteDocument.boardInitialSize
+        }
         content.pages = [Page(paper: paper)]
         let doc = NoteDocument.create(meta: meta, content: content)
         meta = doc.meta
         notes.append(meta)
         return meta
     }
+
+    /// Stamps when a note was opened (Home's "continue" and recents) without touching its
+    /// modified date. Returns the updated meta to open the note with.
+    @discardableResult
+    func markOpened(_ meta: NoteMeta) -> NoteMeta {
+        var m = notes.first { $0.id == meta.id } ?? meta
+        m.lastOpenedAt = Date()
+        persist(m)
+        return m
+    }
+
+    /// Most recently opened or edited first.
+    var recentNotes: [NoteMeta] { notes.sorted { $0.lastActivity > $1.lastActivity } }
+
+    /// Notes with question cards still waiting for an answer, most recent first.
+    var notesWithOpenQuestions: [NoteMeta] { recentNotes.filter { ($0.openQuestions ?? 0) > 0 } }
 
     /// Creates a note whose pages are the PDF's pages, ready to annotate.
     func createNote(fromPDF url: URL, subjectID: UUID?) -> NoteMeta? {
