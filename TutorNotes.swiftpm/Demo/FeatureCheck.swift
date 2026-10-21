@@ -162,6 +162,18 @@ extension DemoDirector {
         canvas.commitLasso(mode: .move, transform: CGAffineTransform(translationX: 30, y: 20))
         let f = doc.element(text.id)?.frame ?? .zero
         FeatureCheck.check("lasso moves items", FeatureCheck.close(f.minX, 110, 1) && FeatureCheck.close(f.minY, 780, 1), "\(f)")
+        await wait(0.25)
+        let g = canvas.lasso.bounds
+        let grow = CGAffineTransform(translationX: -g.minX, y: -g.minY).concatenating(CGAffineTransform(scaleX: 2, y: 2))
+            .concatenating(CGAffineTransform(translationX: g.minX, y: g.minY))
+        canvas.liftLassoSelection()
+        canvas.commitLasso(mode: .resize, transform: grow)
+        var fontSize: CGFloat = 0
+        if case .text(let t) = doc.element(text.id)?.kind { fontSize = t.fontSize }
+        FeatureCheck.check("lasso scales text", FeatureCheck.close(fontSize, 44, 0.5), "font \(fontSize)")
+        await wait(0.25)
+        model.undo()
+        await wait(0.3)
         canvas.clearLassoSelection()
         await wait(0.25)
 
@@ -275,6 +287,25 @@ extension DemoDirector {
         model.undo()
         await wait(0.3)
         FeatureCheck.check("clear page undo", onPage1() == n)
+
+        // Undoing a move after a page was added since keeps the new page.
+        model.movePage(from: 1, to: 0)
+        await wait(0.3)
+        doc.appendPage()
+        await wait(0.3)
+        model.undo()
+        await wait(0.3)
+        FeatureCheck.check("move undo keeps added page", doc.content.pages.count == 4 && Array(doc.content.pages.prefix(3).map(\.id)) == ids
+                           && onPage1() == n, "\(doc.content.pages.count) pages")
+
+        // Ink near the bottom of a page stays on it when the pages get shorter.
+        let low = await writeSum(model, canvas, page: 2, y: 980)
+        let onPage2 = { doc.drawing.strokes.filter { doc.pageRect(2).contains($0.renderBounds.center) }.count }
+        model.setPageSize(.a4Landscape)
+        await wait(0.3)
+        FeatureCheck.check("page size keeps ink on its page", onPage2() == low && onPage1() == n, "\(onPage2()) of \(low)")
+        model.undo()
+        await wait(0.3)
     }
 
     // MARK: Export
@@ -303,6 +334,19 @@ extension DemoDirector {
         } catch {
             FeatureCheck.check("import note file", false, error.localizedDescription)
         }
+
+        // A note file naming files outside its folder is refused.
+        var content = NoteContent()
+        content.attachments = [TutorAttachment(id: "a1", name: "worksheet.pdf", kind: .pdf, mimeType: "application/pdf",
+                                               localFile: "../../..", sizeBytes: 1)]
+        let crafted = NoteArchive(meta: NoteMeta(title: "Crafted"), content: content, drawing: Data(), assets: [:])
+        let refused: Bool
+        if let data = try? crafted.encoded() {
+            do { _ = try NoteArchive.decode(data); refused = false } catch { refused = true }
+        } else {
+            refused = false
+        }
+        FeatureCheck.check("crafted note file refused", refused && doc.assetURL("../../x").path == doc.assetsFolder.appendingPathComponent("x").path)
     }
 
     // MARK: Colours

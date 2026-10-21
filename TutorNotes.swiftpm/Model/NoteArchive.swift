@@ -1,4 +1,5 @@
 import Foundation
+import PencilKit
 
 /// A whole note in one file (`.margin`), for sharing or backing up: the meta and content, the
 /// ink, and every file in the note's assets folder (images, PDFs, attachments, audio). The tutor
@@ -55,15 +56,24 @@ extension NoteArchive {
         let decoder = PropertyListDecoder()
         guard let header = try? decoder.decode(Header.self, from: data), header.version >= 1 else { throw NoteArchiveError.notANote }
         guard header.version <= currentVersion else { throw NoteArchiveError.newerVersion }
-        guard let archive = try? decoder.decode(NoteArchive.self, from: data), archive.isSound else { throw NoteArchiveError.damaged }
+        guard let archive = try? decoder.decode(NoteArchive.self, from: data), archive.isSound,
+              archive.drawing.isEmpty || (try? PKDrawing(data: archive.drawing)) != nil else { throw NoteArchiveError.damaged }
         return archive
     }
 
-    /// Has pages to show, and only plain file names as assets (a name like "../x" would write
-    /// outside the note's folder).
+    /// Has pages of a sensible size, and only plain file names, both for the assets and for every
+    /// file the content refers to (a name like "../x" would reach outside the note's folder).
     private var isSound: Bool {
-        !content.pages.isEmpty && assets.keys.allSatisfy { name in
-            !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
-        }
+        let size = content.pageSize
+        guard !content.pages.isEmpty, size.width.isFinite, size.height.isFinite,
+              (100...20_000).contains(size.width), (100...20_000).contains(size.height) else { return false }
+        var referenced = content.attachments.map(\.localFile) + content.recordings.map(\.fileName)
+        referenced += content.pages.compactMap(\.pdfAssetID)
+        for e in content.elements { if case .image(let image) = e.kind { referenced.append(image.assetID) } }
+        return (Array(assets.keys) + referenced).allSatisfy(NoteArchive.isPlainName)
+    }
+
+    private static func isPlainName(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\\") && !name.contains("\0")
     }
 }

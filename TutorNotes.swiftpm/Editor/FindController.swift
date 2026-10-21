@@ -88,11 +88,13 @@ final class FindController {
     func previous() { step(-1) }
 
     private func step(_ delta: Int) {
-        // Return can arrive before the debounce does: search for what's typed first.
+        // Return can arrive before the debounce does: search for what's typed first, and show
+        // that search's first match rather than stepping past it.
         if searchTask != nil {
             searchTask?.cancel()
             searchTask = nil
             refresh()
+            return
         }
         guard !matches.isEmpty else { return }
         currentIndex = ((currentIndex ?? 0) + delta + matches.count) % matches.count
@@ -200,11 +202,17 @@ final class FindController {
 
     private static func searchText(of e: CanvasElement) -> String? {
         switch e.kind {
-        case .text(let t): return t.rich ? RichTextParser.plainText(t.text) : t.text
-        case .question(let q): return RichTextParser.plainText(q.prompt)
-        case .table(let t): return t.rows.flatMap { $0 }.map(RichTextParser.plainText).joined(separator: "\n")
+        case .text(let t): return collapsed(t.rich ? RichTextParser.plainText(t.text) : t.text)
+        case .question(let q): return collapsed(RichTextParser.plainText(q.prompt))
+        case .table(let t): return collapsed(t.rows.flatMap { $0 }.map(RichTextParser.plainText).joined(separator: " "))
         default: return nil
         }
+    }
+
+    /// Runs of spaces and line breaks as single spaces, the way the query is, so a phrase is found
+    /// across a line break.
+    private static func collapsed(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     // MARK: Handwriting
@@ -213,7 +221,9 @@ final class FindController {
     private func inkMatches(for q: String) -> [Match] {
         var out: [Match] = []
         for region in regions {
-            guard let reading = readings[region.key] else { continue }
+            // A reading of ink that has changed since (or of a page that moved) would point at the
+            // wrong places; it's re-read soon.
+            guard let reading = readings[region.key], reading.signature == region.signature else { continue }
             for line in reading.lines {
                 let text = line.text
                 var from = text.startIndex

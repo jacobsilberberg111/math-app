@@ -627,7 +627,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         if #available(iOS 16.1, *) { isPencilHover = g.zOffset > 0 }
         if isPencilHover { lastHoverDocPoint = p }
         setPencilHovering(isPencilHover && (g.state == .began || g.state == .changed))
-        guard tool.hoverPreview, isPencilHover, replayTime == nil,
+        guard tool.hoverPreview, isPencilHover, replayTime == nil, eyedropper == nil,
               tool.kind == .pen || tool.kind == .highlighter || tool.kind == .eraser else {
             hoverPreview.hide()
             return

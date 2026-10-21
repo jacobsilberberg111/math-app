@@ -123,7 +123,7 @@ struct LibraryView: View {
         .alert("Couldn't import that PDF", isPresented: $importFailed) {
             Button("OK", role: .cancel) {}
         }
-        .noteFileImport(isPresented: $showNoteImporter, canOpen: openNote == nil, open: open)
+        .noteFileImport(isPresented: $showNoteImporter, canOpen: openNote == nil, open: openArrived)
         .alert("Rename Note", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $renameText)
             Button("Rename") { if let r = renaming { library.rename(r, to: renameText) }; renaming = nil }
@@ -306,6 +306,17 @@ struct LibraryView: View {
     /// Every way into a note goes through here, so Home knows what was opened last.
     private func open(_ meta: NoteMeta) {
         openNote = library.markOpened(meta)
+    }
+
+    /// A note file that arrived (AirDrop, Files, the importer). A note can't be presented over a
+    /// sheet, so any that's up goes away first, and the note opens once it has.
+    private func openArrived(_ meta: NoteMeta) {
+        showSettings = false
+        showPastPaper = false
+        showFlashcards = false
+        showOnboarding = false
+        showScanner = false
+        openAfterSheet(meta)
     }
 
     /// Opens a note once a sheet or the scanner has finished going away (presenting during a

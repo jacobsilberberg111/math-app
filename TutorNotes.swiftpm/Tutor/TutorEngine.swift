@@ -59,8 +59,8 @@ final class TutorEngine {
     @ObservationIgnored private var observerTask: Task<Void, Never>?
     @ObservationIgnored private var glanceTimer: Task<Void, Never>?
     @ObservationIgnored private var stuckTimer: Task<Void, Never>?
-    @ObservationIgnored private var pendingWriting: [CGRect] = []
-    @ObservationIgnored private var recentWriting: [(Date, CGRect)] = []
+    @ObservationIgnored var pendingWriting: [CGRect] = []
+    @ObservationIgnored var recentWriting: [(Date, CGRect)] = []
     @ObservationIgnored private var lastLook = Date.distantPast
     @ObservationIgnored private var glanceLog: [Date] = []
     @ObservationIgnored private var lastStrokeDate = Date.distantPast

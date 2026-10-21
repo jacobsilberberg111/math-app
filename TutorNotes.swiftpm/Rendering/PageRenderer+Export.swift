@@ -48,8 +48,10 @@ extension PageRenderer {
             }
             var urls: [URL] = []
             for i in doc.content.pages.indices {
-                let data = pngData(size: doc.pageSize, scale: 2) { ctx in
-                    drawPage(doc, page: i, ctx: ctx, inkScale: 2, env: env)
+                let data = autoreleasepool {
+                    pngData(size: doc.pageSize, scale: 2) { ctx in
+                        drawPage(doc, page: i, ctx: ctx, inkScale: 2, env: env)
+                    }
                 }
                 let url = folder.appendingPathComponent("\(title) – Page \(i + 1).png")
                 try data.write(to: url, options: .atomic)

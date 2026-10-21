@@ -144,12 +144,13 @@ extension NoteCanvasViewController {
         let paperHex = page.pdfAssetID == nil ? page.paper.color.hex : "#FFFFFF"
         let darkPaper = page.pdfAssetID == nil && page.paper.color.isDark
 
-        let side = ColorSampler.side
+        // The same size on screen at any zoom: about a fingertip.
+        let side = max(6, min(60, ColorSampler.side / max(zoom, 0.01)))
         let region = CGRect(x: p.x - side / 2, y: p.y - side / 2, width: side, height: side)
         let doc = document
         let env = PageRenderer.environment(for: doc)
         let format = UIGraphicsImageRendererFormat()
-        format.scale = ColorSampler.scale
+        format.scale = ColorSampler.scale * ColorSampler.side / side
         format.opaque = true
         format.preferredRange = .standard
         let image = UIGraphicsImageRenderer(size: region.size, format: format).image { rc in
@@ -160,7 +161,7 @@ extension NoteCanvasViewController {
             ctx.fill(region)
             ctx.clip(to: region)
             // No ruling: lines and grids aren't what anyone is trying to pick.
-            PageRenderer.drawPage(doc, page: index, ctx: ctx, inkScale: ColorSampler.scale, env: env, patternAlpha: 0, region: region)
+            PageRenderer.drawPage(doc, page: index, ctx: ctx, inkScale: format.scale, env: env, patternAlpha: 0, region: region)
         }
         guard let cg = image.cgImage, let rgba = rgbaBytes(of: cg),
               let picked = ColorSampler.dominantColor(rgba: rgba, width: cg.width, height: cg.height,

@@ -30,5 +30,9 @@ extension TutorEngine {
             }
         }
         if case .offscreen(_, _, _) = suggestion { suggestion = nil }
+        // Where the student last wrote (document rects), which the next glance and turn look at.
+        let moved = { (r: CGRect) in r.offsetBy(dx: 0, dy: remap.inkOffset(atDocY: r.midY)) }
+        pendingWriting = pendingWriting.map(moved)
+        recentWriting = recentWriting.map { ($0.0, moved($0.1)) }
     }
 }

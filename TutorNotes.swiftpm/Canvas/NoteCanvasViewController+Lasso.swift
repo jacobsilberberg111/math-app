@@ -387,14 +387,16 @@ extension NoteCanvasViewController {
         let old = document.docRect(for: e)
         var size = old.size * k
         var rect: CGRect?
+        // A move or rotation keeps an item's size exactly; only a resize re-measures it.
+        let scales = abs(k - 1) > 0.001
         switch e.kind {
-        case .text(var text):
+        case .text(var text) where scales:
             let fontSize = max(6, min(240, text.fontSize * k))
             let applied = fontSize / max(text.fontSize, 1)
             text.fontSize = fontSize
             e.kind = .text(text)
             size = ElementRenderer.measureText(text, author: e.author, width: old.width * applied, env: env)
-        case .math(var math):
+        case .math(var math) where scales:
             math.fontSize = max(10, min(80, math.fontSize * k))
             e.kind = .math(math)
             size = ElementRenderer.measureMath(math)
@@ -403,9 +405,11 @@ extension NoteCanvasViewController {
             e.kind = .ink(moved)
             rect = frame
         default:
-            let start = e.frame
-            ElementResizer.resize(&e, to: size, from: start, env: env)
-            size = e.frame.size
+            if scales {
+                let start = e.frame
+                ElementResizer.resize(&e, to: size, from: start, env: env)
+                size = e.frame.size
+            }
         }
         let centre = old.center.applying(t)
         let target = rect ?? CGRect(x: centre.x - size.width / 2, y: centre.y - size.height / 2, width: size.width, height: size.height)

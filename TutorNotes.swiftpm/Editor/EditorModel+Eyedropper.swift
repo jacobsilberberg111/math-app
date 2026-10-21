@@ -7,9 +7,11 @@ extension EditorModel {
         guard let canvas else { return }
         palettePresented = false
         flash("Tap the page to pick a colour")
+        // The slot whose palette was open, even if another colour is tapped while sampling.
+        let kind = tools.kind, slot = tools.colorIndex
         canvas.beginEyedropper { [weak self] hex in
-            guard let self, let hex else { return }
-            self.tools.setColor(hex, at: self.tools.colorIndex)
+            guard let self, let hex, self.tools.kind == kind else { return }
+            self.tools.setColor(hex, at: slot)
             Haptics.success()
             self.flash("Picked colour")
         }

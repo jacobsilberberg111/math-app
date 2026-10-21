@@ -227,8 +227,11 @@ enum PageRenderer {
         do {
             try renderer.writePDF(to: url) { rc in
                 for i in doc.content.pages.indices {
-                    rc.beginPage()
-                    drawPage(doc, page: i, ctx: rc.cgContext, inkScale: 3, env: env)
+                    // Each page's ink bitmap is large; let it go before the next page.
+                    autoreleasepool {
+                        rc.beginPage()
+                        drawPage(doc, page: i, ctx: rc.cgContext, inkScale: 3, env: env)
+                    }
                 }
             }
             return url

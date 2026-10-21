@@ -371,7 +371,10 @@ final class NoteDocument {
         let style = paper ?? content.pages[index].paper
         let shiftFromY = pageOrigin(insertAt).y - NoteDocument.pageGap / 2
         let dy = pageSize.height + NoteDocument.pageGap
+        let remap = PageRemap(destination: content.pages.indices.map { $0 < insertAt ? $0 : $0 + 1 }, oldSize: content.pageSize,
+                              newSize: content.pageSize, topMargin: topMargin, pageGap: pageGap)
         content.pages.insert(Page(paper: style), at: insertAt)
+        content.paper = content.paper.map { remap.remapped($0) }
         for i in content.elements.indices where content.elements[i].pageIndex >= insertAt {
             content.elements[i].pageIndex += 1
         }
@@ -384,6 +387,7 @@ final class NoteDocument {
         undoManager.removeAllActions()
         canvas?.documentDidChangePages()
         canvas?.documentDidReplaceDrawing()
+        onPagesRearranged?(remap)
         markDirty()
     }
 
@@ -403,11 +407,17 @@ final class NoteDocument {
         for i in content.elements.indices where content.elements[i].pageIndex > index {
             content.elements[i].pageIndex -= 1
         }
+        // Page numbers kept elsewhere (past-paper questions, the tutor's records) close the gap;
+        // anything that was on the deleted page now points at the one before it.
+        let remap = PageRemap(destination: content.pages.indices.map { $0 < index ? $0 : max(0, $0 - 1) }, oldSize: content.pageSize,
+                              newSize: content.pageSize, topMargin: topMargin, pageGap: pageGap)
         content.pages.remove(at: index)
+        content.paper = content.paper.map { remap.remapped($0) }
         undoManager.removeAllActions()
         for id in removedIDs { canvas?.documentDidRemoveElement(id: id) }
         canvas?.documentDidChangePages()
         canvas?.documentDidReplaceDrawing()
+        onPagesRearranged?(remap)
         markDirty()
     }
 
@@ -454,7 +464,9 @@ final class NoteDocument {
 
     var assetsFolder: URL { Storage.assetsFolder(for: id) }
 
-    func assetURL(_ name: String) -> URL { assetsFolder.appendingPathComponent(name) }
+    /// An asset's file. Only the last path component is used, so a name from an imported note file
+    /// can never reach outside this note's assets folder.
+    func assetURL(_ name: String) -> URL { assetsFolder.appendingPathComponent((name as NSString).lastPathComponent) }
 
     /// Stores image data (downscaled to a sensible size) and returns its asset id.
     func storeImage(_ image: UIImage) -> String? {

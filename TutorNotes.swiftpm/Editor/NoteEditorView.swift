@@ -224,6 +224,15 @@ struct NoteEditorView: View {
     /// Files go to the share sheet (AirDrop, Files, Mail…); Print opens the print dialog.
     private func export(_ kind: ExportKind) {
         model.document.saveNow()
+        // A long note takes a moment: say so, and let the menu close before the work starts.
+        if model.pageCount > 6 { model.flash("Preparing \(model.pageCount) pages…") }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            finishExport(kind)
+        }
+    }
+
+    private func finishExport(_ kind: ExportKind) {
         guard let urls = NoteExporter.files(for: kind, document: model.document) else {
             model.flash("Couldn't export this note")
             return
