@@ -313,6 +313,23 @@ final class DemoDirector {
         endTutorTurn(model, replyID: reply)
         await wait(2.5)
 
+        // 5b. The student starts the new question, stalls, and taps Hint: the card's stored hint
+        // is written in (no network call), through the same path as the toolbar button.
+        if let newQ = doc.content.elements.last(where: { if case .question = $0.kind { return true }; return false }),
+           case .question(let nq) = newQ.kind {
+            let nqDoc = doc.docRect(for: newQ)
+            canvas.scrollToReveal(nqDoc.insetBy(dx: 0, dy: -40))
+            await wait(1.2)
+            await handwrite("x² + 3x − 10 = 0", at: CGPoint(x: nqDoc.minX + 40, y: nqDoc.minY + nq.promptHeight + 90), size: 30, color: ink, width: 2.6, canvas: canvas)
+            await wait(1.2)
+            model.giveHint()
+            await waitForReveals(canvas)
+            if case .question(let after) = doc.content.elements.first(where: { $0.id == newQ.id })?.kind {
+                log("hint revealed: \(after.revealedHint)")
+            }
+            await wait(2.6)
+        }
+
         // 6. Pages overview.
         model.showPages = true
         await wait(2.6)

@@ -1,6 +1,6 @@
 # Tutor Notes
 
-An iPad note-taking app for Apple Pencil, with a built-in Claude tutor that works **on the page** with you. It writes in its own handwriting, typesets math, draws graphs and diagrams, circles your mistakes, adds practice questions, and marks your answers live.
+An iPad note-taking app for Apple Pencil, with a built-in Claude tutor that works **on the page** with you. It writes in clean type (or handwriting, if you prefer), typesets math, draws graphs and diagrams, circles your mistakes, adds practice questions, and marks your answers live.
 
 > **Status: v1.** It builds cleanly in CI with Xcode 26.6, for the iPad simulator and as a Release device build. The platform-independent logic is unit-tested (see `CoreTests/`), and a scripted walkthrough runs the real canvas and tutor pipeline in the simulator to record the demo video. It hasn't been tested on a physical iPad with an Apple Pencil yet, so Pencil-specific behaviour (pressure, hover, squeeze, palm rejection) is unverified on hardware.
 
@@ -95,7 +95,7 @@ Default model is **Claude Sonnet 5.5**. Switch to Opus 5.5, Haiku 5.5 or Fable 5
 
 | Tool | What it does on the page |
 |---|---|
-| `write` | Handwritten text with inline `$LaTeX$`. It **streams onto the page live** as the model generates it. |
+| `write` | Text with inline `$LaTeX$`, in clean San Francisco type by default or handwriting (Settings → Tutor's writing). It **streams onto the page live** as the model generates it. |
 | `write_math` | Typeset multi-line working, aligned on `=` (fractions, roots, powers, integrals, sums, limits, matrices, cases, vectors…). |
 | `graph` | Cartesian planes: functions in x, points, segments and vectors, dashed asymptotes, shaded areas, blank planes to sketch on, and updates to existing graphs. |
 | `number_line` | Inequalities, intervals, open and closed points. |
@@ -113,6 +113,7 @@ Default model is **Claude Sonnet 5.5**. Switch to Opus 5.5, Haiku 5.5 or Fable 5
 - A glowing **tutor cursor** glides across the page and follows its pen as it writes. A status pill shows what it's doing ("Marking up your work…").
 - **Watching mode:** when you pause writing, it glances at the new work and decides whether to step in. It might circle a slip, mark a finished answer, or say nothing. You can set the involvement to Quiet, Balanced or Hands-on.
 - **Ask anywhere:** the **Ask** tool lets you drag around or tap any working to get a quick menu (Check, Hint, Next step, Explain, Full solution, Graph it, Similar question, Ask…). A long-press or select on any item gives the same menu, and so does squeezing the pencil.
+- **Hint button:** next to Ask in the toolbar. One tap gets a small nudge written beside your latest working (or the question's stored hint, free and instant), never the answer. On a past paper the tutor also looks at the question you're on.
 - **Stuck detection:** "Stuck on Q2? Get a hint" appears if you stop on a question. Stored hints reveal instantly and cost nothing.
 - **Avoids your writing:** it's told where your ink and the free space are, and anything it places is nudged away from your work.
 - **Undo the tutor:** every turn can be reverted in one tap. Normal undo works too.

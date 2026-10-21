@@ -953,6 +953,69 @@ final class TutorEngine {
 
     // MARK: Question helpers (no API call needed)
 
+    /// The Hint button. A question card's stored hint is shown first (no API call); otherwise the
+    /// tutor looks at the latest working and leaves one small nudge beside it. Returns true if it
+    /// asked the tutor.
+    @discardableResult
+    func nudge() -> Bool {
+        guard !isBusy else { return false }
+        if case .stuck = suggestion { suggestion = nil }
+        let now = Date()
+        let recent = recentWriting.filter { now.timeIntervalSince($0.0) < 180 }.map(\.1)
+        let latest = recent.last
+
+        // The question card being worked in: the one under the latest writing, else (with
+        // nothing written lately) the first open card on screen.
+        let cards = document.content.elements.filter {
+            if case .question(let q) = $0.kind { return q.status == .open }
+            return false
+        }
+        let card: CanvasElement?
+        if let latest {
+            card = cards.first { document.docRect(for: $0).intersects(latest.insetBy(dx: -40, dy: -40)) }
+        } else {
+            card = cards.first { canvas?.isVisible(document.docRect(for: $0)) ?? false }
+        }
+        if let card, case .question(let q) = card.kind {
+            if !q.revealedHint, let hint = q.hint, !hint.isEmpty {
+                revealHint(for: card)
+                return false
+            }
+            send(TutorPrompts.nudge(on: "Q\(q.number)", hasWorking: latest != nil), focus: questionFocus(card, q), displayText: "Hint")
+            return true
+        }
+
+        // Otherwise: the last few things written, or what's on screen.
+        var area: CGRect
+        if let latest {
+            let last = Array(recent.suffix(4))
+            area = last.dropFirst().reduce(last[0]) { $0.union($1) }
+            if area.height > 700 || area.width > 1100 { area = latest }
+            area = area.insetBy(dx: -60, dy: -60)
+        } else if let visible = canvas?.visibleDocRect {
+            area = visible
+        } else {
+            send(TutorPrompts.nudge(on: nil, hasWorking: false), displayText: "Hint")
+            return true
+        }
+        let pageBounds = CGRect(origin: .zero, size: document.pageSize)
+        let (page, local) = document.pageRectFromDoc(area)
+        var rect = local.intersection(pageBounds)
+        var target: String?
+        // On a past paper the tutor also sees the question being answered, not just the working.
+        if let paper = document.content.paper, paper.outlined, !rect.isNull {
+            let y = latest.map(document.pageRectFromDoc).flatMap { $0.page == page ? $0.rect.midY : nil } ?? rect.midY
+            if let pq = paper.question(page: page, y: y) {
+                target = "question \(pq.label)"
+                let question = CGRect(x: 0, y: pq.top, width: pageBounds.width, height: max(40, min(pq.bottom, rect.maxY) - pq.top))
+                rect = rect.union(question).intersection(pageBounds)
+            }
+        }
+        send(TutorPrompts.nudge(on: target, hasWorking: latest != nil),
+             focus: rect.isNull || rect.isEmpty ? nil : (page, rect), displayText: "Hint")
+        return true
+    }
+
     func revealHint(for element: CanvasElement) {
         guard case .question(var q) = element.kind else { return }
         guard let hint = q.hint, !hint.isEmpty else {

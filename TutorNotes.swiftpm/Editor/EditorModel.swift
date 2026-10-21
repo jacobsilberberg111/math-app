@@ -107,6 +107,12 @@ final class EditorModel: CanvasHost {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { showTutor = true }
     }
 
+    /// The Hint button: a small nudge from the tutor, written beside the latest working.
+    func giveHint() {
+        Haptics.tap()
+        if tutor.nudge() { showPanelIfNoKey() }
+    }
+
     func askAboutRegion(_ request: QuickMenuRequest) {
         pendingFocus = (request.page, request.rect)
         quickMenu = nil

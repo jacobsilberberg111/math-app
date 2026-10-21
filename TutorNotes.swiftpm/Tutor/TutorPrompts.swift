@@ -59,6 +59,13 @@ enum TutorPrompts {
         "Mark question \(q.label) (\(q.marks) mark\(q.marks == 1 ? "" : "s"), page \(q.page + 1), outlined) against the mark scheme. Tick where marks are earned, note briefly where they're lost, and record it with score_paper. If I haven't answered it yet, don't mark it: just say so."
     }
 
+    /// The Hint button: the smallest push that gets the student moving, never the step itself.
+    static func nudge(on target: String?, hasWorking: Bool) -> String {
+        "Give me a small nudge" + (target.map { " on \($0)" } ?? "") + ". "
+            + (hasWorking ? "Look at my latest working (outlined) and" : "Look at what I'm working on (outlined) and")
+            + " leave one short hint on the page right beside it: a single line, or circle the spot to look at again with a few words. Point me at the idea or the slip; don't do the next step for me and don't give the answer. Keep the chat reply to a few words."
+    }
+
     static func finishPaper(_ paper: PaperSession) -> String {
         var s = "I've finished the paper"
         if paper.startedAt != nil, let end = paper.finishedAt {

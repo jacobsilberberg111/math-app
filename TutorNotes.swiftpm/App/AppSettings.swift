@@ -173,7 +173,7 @@ final class AppSettings: ObservableObject {
         observerModel = ObserverModelChoice(rawValue: d.string(forKey: "observerModel") ?? "") ?? .sameAsTutor
         pauseDelay = d.object(forKey: "pauseDelay") as? Double ?? 3.5
         speakFeedback = d.bool(forKey: "speakFeedback")
-        tutorHand = TutorHandStyle(rawValue: d.string(forKey: "tutorHand") ?? "") ?? .handwriting
+        tutorHand = TutorHandStyle(rawValue: d.string(forKey: "tutorHand") ?? "") ?? .typed
         tutorInkHex = d.string(forKey: "tutorInkHex") ?? "#7048E8"
         studentLevel = d.string(forKey: "studentLevel") ?? ""
         studentGoals = d.string(forKey: "studentGoals") ?? ""

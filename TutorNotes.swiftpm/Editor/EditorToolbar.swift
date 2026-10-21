@@ -343,6 +343,7 @@ struct EditorToolStrip: View {
                 }
                 Divider().frame(height: 24).padding(.horizontal, 4)
                 tutorToolButton
+                hintButton
             }
             .padding(4)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.secondary.opacity(0.08)))
@@ -418,6 +419,28 @@ struct EditorToolStrip: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Ask tutor about an area")
+    }
+
+    private var hintButton: some View {
+        let tint = Color(hex: settings.tutorInkHex)
+        return Button {
+            model.giveHint()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "lightbulb")
+                    .font(.system(size: 16, weight: .semibold))
+                Text("Hint").font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
+            .frame(height: 38)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(tint.opacity(0.1)))
+        }
+        .buttonStyle(.plain)
+        .disabled(model.tutor.isBusy)
+        .opacity(model.tutor.isBusy ? 0.45 : 1)
+        .accessibilityLabel("Give me a hint")
+        .accessibilityHint("Your tutor leaves a small nudge beside your latest working, without giving the answer")
     }
 
     @ViewBuilder

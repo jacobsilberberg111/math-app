@@ -87,7 +87,7 @@ enum ElementRenderer {
     static func tableColumnWidths(_ t: TableContent, maxWidth: CGFloat) -> [CGFloat] {
         let cols = t.rows.map(\.count).max() ?? 0
         guard cols > 0 else { return [] }
-        let font = NoteFonts.rounded(size: t.fontSize, weight: .regular)
+        let font = NoteFonts.sans(size: t.fontSize, weight: .regular)
         var natural = [CGFloat](repeating: 40, count: cols)
         for row in t.rows {
             for (j, cell) in row.enumerated() {
@@ -101,7 +101,7 @@ enum ElementRenderer {
     }
 
     static func tableRowHeights(_ t: TableContent, widths: [CGFloat]) -> [CGFloat] {
-        let font = NoteFonts.rounded(size: t.fontSize, weight: .regular)
+        let font = NoteFonts.sans(size: t.fontSize, weight: .regular)
         return t.rows.map { row in
             var h: CGFloat = font.lineHeight + 16
             for (j, cell) in row.enumerated() where j < widths.count {
@@ -370,7 +370,7 @@ enum ElementRenderer {
         ctx.strokePath()
 
         if let title = g.title, !title.isEmpty {
-            let f = NoteFonts.rounded(size: 15, weight: .semibold)
+            let f = NoteFonts.sans(size: 15, weight: .semibold)
             let l = richLayout(title, font: f, width: rect.width - 28, rich: true)
             l.draw(in: ctx, origin: CGPoint(x: rect.minX + 14, y: rect.minY + 8), color: dark.withAlphaComponent(axesAlpha))
         }
@@ -614,7 +614,7 @@ enum ElementRenderer {
         }
 
         // Labels last, on top of everything.
-        let labelFont = NoteFonts.rounded(size: 13, weight: .medium)
+        let labelFont = NoteFonts.sans(size: 13, weight: .medium)
         for (text, pos, hex) in labelPositions {
             let l = richLayout(text, font: labelFont, width: 220, rich: true)
             var origin = CGPoint(x: pos.x - l.size.width - 4, y: pos.y - l.size.height - 2)
@@ -709,7 +709,7 @@ enum ElementRenderer {
                 }
             }
         }
-        let labelFont = NoteFonts.rounded(size: 13, weight: .medium)
+        let labelFont = NoteFonts.sans(size: 13, weight: .medium)
         for p in n.points {
             let c = UIColor(hex: p.colorHex).withAlphaComponent(alpha)
             let x = px(p.value)
@@ -737,8 +737,8 @@ enum ElementRenderer {
     static func drawTable(_ t: TableContent, rect: CGRect, progress: CGFloat, ctx: CGContext) {
         let widths = tableColumnWidths(t, maxWidth: rect.width)
         let heights = tableRowHeights(t, widths: widths)
-        let font = NoteFonts.rounded(size: t.fontSize, weight: .regular)
-        let headerFont = NoteFonts.rounded(size: t.fontSize, weight: .semibold)
+        let font = NoteFonts.sans(size: t.fontSize, weight: .regular)
+        let headerFont = NoteFonts.sans(size: t.fontSize, weight: .semibold)
         let color = UIColor(hex: t.colorHex)
         let visibleRows = Int(ceil(CGFloat(t.rows.count) * progress))
         let totalW = widths.reduce(0, +)
@@ -801,7 +801,7 @@ enum ElementRenderer {
 
         UIGraphicsPushContext(ctx)
         // Number badge.
-        let badgeFont = NoteFonts.rounded(size: 15, weight: .bold)
+        let badgeFont = NoteFonts.sans(size: 15, weight: .bold)
         let badgeText = NSAttributedString(string: "Q\(q.number)", attributes: [.font: badgeFont, .foregroundColor: UIColor.white.withAlphaComponent(cardAlpha)])
         let bs = badgeText.size()
         let badge = CGRect(x: rect.minX + 14, y: rect.minY + 14, width: max(38, bs.width + 16), height: 28)
@@ -811,7 +811,7 @@ enum ElementRenderer {
         badgeText.draw(at: CGPoint(x: badge.midX - bs.width / 2, y: badge.midY - bs.height / 2))
 
         // Marks / status on the right.
-        let metaFont = NoteFonts.rounded(size: 13, weight: .semibold)
+        let metaFont = NoteFonts.sans(size: 13, weight: .semibold)
         var metaText = "\(q.marks) mark\(q.marks == 1 ? "" : "s")"
         if q.status != .open {
             let symbol = q.status == .correct ? "✓" : (q.status == .incorrect ? "✗" : "◐")
@@ -848,7 +848,7 @@ enum ElementRenderer {
             ctx.setLineDash(phase: 0, lengths: [])
             if !env.forSnapshot {
                 UIGraphicsPushContext(ctx)
-                let hint = NSAttributedString(string: "Answer", attributes: [.font: NoteFonts.rounded(size: 11, weight: .medium),
+                let hint = NSAttributedString(string: "Answer", attributes: [.font: NoteFonts.sans(size: 11, weight: .medium),
                                                                               .foregroundColor: tint.withAlphaComponent(0.45 * a)])
                 hint.draw(at: CGPoint(x: answer.minX + 10, y: answer.minY + 6))
                 UIGraphicsPopContext()

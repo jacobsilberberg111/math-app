@@ -2,16 +2,18 @@ import UIKit
 
 /// Fonts used for the tutor's writing and the student's text boxes.
 enum NoteFonts {
+    /// Tutor writing: clean San Francisco by default (the look of Notability's typed text), or
+    /// Noteworthy if "Handwritten" is picked in Settings.
     static func tutorFont(style: TextStyle, size: CGFloat, hand: TutorHandStyle) -> UIFont {
         switch style {
         case .heading:
             if hand == .handwriting, let f = UIFont(name: "Noteworthy-Bold", size: size) { return f }
-            return rounded(size: size, weight: .bold)
+            return sans(size: size, weight: .semibold)
         case .typed:
-            return rounded(size: size, weight: .regular)
+            return sans(size: size, weight: .regular)
         case .handwriting, .note, .sticky:
             if hand == .handwriting, let f = UIFont(name: "Noteworthy-Light", size: size) { return f }
-            return rounded(size: size, weight: .regular)
+            return sans(size: size, weight: .regular)
         }
     }
 
@@ -19,10 +21,8 @@ enum NoteFonts {
         UIFont.systemFont(ofSize: size)
     }
 
-    static func rounded(size: CGFloat, weight: UIFont.Weight) -> UIFont {
-        let base = UIFont.systemFont(ofSize: size, weight: weight)
-        if let d = base.fontDescriptor.withDesign(.rounded) { return UIFont(descriptor: d, size: size) }
-        return base
+    static func sans(size: CGFloat, weight: UIFont.Weight) -> UIFont {
+        UIFont.systemFont(ofSize: size, weight: weight)
     }
 
     static func bold(_ font: UIFont) -> UIFont {
