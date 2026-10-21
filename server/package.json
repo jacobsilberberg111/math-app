@@ -1,0 +1,15 @@
+{
+  "name": "tutor-notes-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Authenticated relay between the Tutor Notes iPad app and the Claude API. Keeps the API key on the server.",
+  "type": "module",
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  }
+}

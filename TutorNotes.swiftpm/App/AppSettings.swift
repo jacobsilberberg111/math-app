@@ -118,13 +118,25 @@ enum PencilSqueezeAction: String, CaseIterable, Identifiable {
     }
 }
 
-/// App-wide preferences. Persisted in UserDefaults; the API key lives in the Keychain.
+/// How the app reaches Claude: through your own tutor server (which holds the API key, e.g. on
+/// Railway) or directly with an API key stored on this iPad.
+enum TutorConnection: String, CaseIterable, Identifiable {
+    case server, apiKey
+
+    var id: String { rawValue }
+    var title: String { self == .server ? "Tutor server" : "Own API key" }
+}
+
+/// App-wide preferences. Persisted in UserDefaults; secrets (API key, server token) live in the Keychain.
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     private let defaults = UserDefaults.standard
 
+    @Published var connection: TutorConnection { didSet { defaults.set(connection.rawValue, forKey: "connection") } }
     @Published var apiKey: String { didSet { Keychain.write(apiKey.trimmed, for: "apiKey") } }
+    @Published var serverURL: String { didSet { defaults.set(serverURL.trimmed, forKey: "serverURL") } }
+    @Published var serverToken: String { didSet { Keychain.write(serverToken.trimmed, for: "serverToken") } }
     @Published var tutorModel: String { didSet { defaults.set(tutorModel, forKey: "tutorModel") } }
     @Published var effort: TutorEffort { didSet { defaults.set(effort.rawValue, forKey: "effort") } }
     @Published var proactive: Bool { didSet { defaults.set(proactive, forKey: "proactive") } }
@@ -149,7 +161,11 @@ final class AppSettings: ObservableObject {
 
     private init() {
         let d = UserDefaults.standard
-        apiKey = Keychain.read("apiKey") ?? ""
+        let storedKey = Keychain.read("apiKey") ?? ""
+        apiKey = storedKey
+        serverURL = d.string(forKey: "serverURL") ?? ""
+        serverToken = Keychain.read("serverToken") ?? ""
+        connection = TutorConnection(rawValue: d.string(forKey: "connection") ?? "") ?? (storedKey.isEmpty ? .server : .apiKey)
         tutorModel = d.string(forKey: "tutorModel") ?? ClaudeModelOption.sonnet.id
         effort = TutorEffort(rawValue: d.string(forKey: "effort") ?? "") ?? .medium
         proactive = d.object(forKey: "proactive") as? Bool ?? true
@@ -173,7 +189,32 @@ final class AppSettings: ObservableObject {
         hasSeenOnboarding = d.bool(forKey: "hasSeenOnboarding")
     }
 
-    var hasAPIKey: Bool { !apiKey.trimmed.isEmpty }
+    /// The tutor server's base URL, accepting input with or without a scheme.
+    var normalizedServerURL: URL? {
+        var t = serverURL.trimmed
+        guard !t.isEmpty else { return nil }
+        if !t.lowercased().hasPrefix("http://") && !t.lowercased().hasPrefix("https://") { t = "https://" + t }
+        while t.hasSuffix("/") { t.removeLast() }
+        guard let url = URL(string: t), url.host != nil else { return nil }
+        return url
+    }
+
+    /// Whether the tutor can make requests with the current connection settings.
+    var isTutorConfigured: Bool {
+        switch connection {
+        case .apiKey: return !apiKey.trimmed.isEmpty
+        case .server: return normalizedServerURL != nil && !serverToken.trimmed.isEmpty
+        }
+    }
+
+    func makeClient() -> AnthropicClient {
+        switch connection {
+        case .apiKey:
+            return AnthropicClient(apiKey: apiKey.trimmed)
+        case .server:
+            return AnthropicClient(serverURL: normalizedServerURL ?? AnthropicClient.anthropicURL, appToken: serverToken.trimmed)
+        }
+    }
     var defaultPaper: PaperStyle { PaperStyle(pattern: defaultPattern, color: defaultPaperColor) }
     var modelOption: ClaudeModelOption { ClaudeModelOption.option(for: tutorModel) }
 

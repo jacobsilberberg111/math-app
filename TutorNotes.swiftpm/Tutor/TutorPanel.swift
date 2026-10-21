@@ -19,7 +19,7 @@ struct TutorPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if !settings.hasAPIKey {
+            if !settings.isTutorConfigured {
                 APIKeyPrompt()
                 Divider()
             }
@@ -499,25 +499,13 @@ struct TutorEmptyState: View {
 
 struct APIKeyPrompt: View {
     @EnvironmentObject var settings: AppSettings
-    @State private var key = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Connect Claude", systemImage: "key.fill").font(.system(size: 14, weight: .semibold))
-            Text("Paste an Anthropic API key from console.anthropic.com. It's stored in the iPad's Keychain and only sent to api.anthropic.com.")
+            Label("Connect your tutor", systemImage: "key.fill").font(.system(size: 14, weight: .semibold))
+            Text("Enter your tutor server's URL and access token, or paste your own Anthropic API key.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
-            HStack {
-                SecureField("sk-ant-…", text: $key)
-                    .textFieldStyle(.roundedBorder)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button("Save") {
-                    settings.apiKey = key.trimmed
-                    settings.hasSeenOnboarding = true
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(key.trimmed.isEmpty)
-            }
+            ConnectionForm(compact: true)
         }
         .padding(14)
     }

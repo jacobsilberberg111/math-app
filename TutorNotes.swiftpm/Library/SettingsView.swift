@@ -4,9 +4,6 @@ struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @ObservedObject private var memory = TutorMemoryStore.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var keyDraft = ""
-    @State private var keyStatus: String?
-    @State private var testing = false
 
     var body: some View {
         NavigationStack {
@@ -31,36 +28,17 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
-            .onAppear { keyDraft = settings.apiKey }
-            // A key typed but not submitted would otherwise be lost on Done / swipe-down.
-            .onDisappear {
-                if keyDraft.trimmed != settings.apiKey { settings.apiKey = keyDraft.trimmed }
-            }
         }
     }
 
     private var apiSection: some View {
         Section {
-            SecureField("Anthropic API key (sk-ant-…)", text: $keyDraft)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .onSubmit { settings.apiKey = keyDraft.trimmed }
-            HStack {
-                Button(testing ? "Checking…" : "Save & Test") {
-                    settings.apiKey = keyDraft.trimmed
-                    test()
-                }
-                .disabled(keyDraft.trimmed.isEmpty || testing)
-                Spacer()
-                if let keyStatus {
-                    Text(keyStatus).font(.footnote).foregroundStyle(keyStatus.hasPrefix("✓") ? .green : .red)
-                }
-            }
-            Link("Get an API key", destination: URL(string: "https://console.anthropic.com/settings/keys")!)
+            ConnectionForm()
+                .padding(.vertical, 4)
         } header: {
-            Text("Claude")
+            Text("Claude connection")
         } footer: {
-            Text("Stored in the Keychain. Requests go directly from this iPad to api.anthropic.com and are billed to your Anthropic account.")
+            Text("Use your tutor server (see the README's Railway section) so the API key never lives on this iPad, or paste your own key. Usage is billed to the Anthropic account whose key is used.")
         }
     }
 
@@ -168,22 +146,6 @@ struct SettingsView: View {
                 ForEach(PaperColor.allCases) { Text($0.rawValue.capitalized).tag($0) }
             }
             Toggle("Add pages automatically as I write", isOn: $settings.autoAddPages)
-        }
-    }
-
-    private func test() {
-        testing = true
-        keyStatus = nil
-        let client = AnthropicClient(apiKey: settings.apiKey.trimmed)
-        Task {
-            do {
-                let models = try await client.listModels()
-                let hasDefault = models.contains(settings.tutorModel)
-                keyStatus = hasDefault || models.isEmpty ? "✓ Connected" : "✓ Connected (\(settings.modelOption.name) not listed for this key)"
-            } catch {
-                keyStatus = (error as? AnthropicError)?.errorDescription ?? error.localizedDescription
-            }
-            testing = false
         }
     }
 }

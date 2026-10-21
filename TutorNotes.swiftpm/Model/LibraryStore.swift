@@ -257,7 +257,7 @@ enum WelcomeContent {
         doc.content.elements.append(CanvasElement(id: doc.nextElementID(), pageIndex: 0,
                                                   frame: CGRect(x: 40, y: y, width: 736, height: q.promptHeight + 230), author: .tutor, kind: .question(q)))
         y += q.promptHeight + 230 + 24
-        _ = addText("Tips: draw a shape and hold to snap it · two-finger tap to undo · squeeze Apple Pencil Pro to call me · add your API key in Settings.",
+        _ = addText("Tips: draw a shape and hold to snap it · two-finger tap to undo · squeeze Apple Pencil Pro to call me · connect me in Settings.",
                     x: 56, y: min(y, 960), width: 700, style: .note, size: 16, color: "#57606A")
     }
 }

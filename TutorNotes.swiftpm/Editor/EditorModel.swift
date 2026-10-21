@@ -86,7 +86,7 @@ final class EditorModel: CanvasHost {
     /// Without an API key the tutor can only answer in the panel (which shows the key prompt), so
     /// open it rather than letting a canvas action silently do nothing.
     func showPanelIfNoKey() {
-        guard !AppSettings.shared.hasAPIKey else { return }
+        guard !AppSettings.shared.isTutorConfigured else { return }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { showTutor = true }
     }
 

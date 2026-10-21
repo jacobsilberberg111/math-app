@@ -11,10 +11,19 @@ targets:
   TutorNotes:
     type: application
     platform: iOS
+    # Listed per folder: XcodeGen treats a ".swiftpm" directory as a single file reference.
     sources:
-      - path: TutorNotes.swiftpm
-        excludes:
-          - Package.swift
+      - TutorNotes.swiftpm/App
+      - TutorNotes.swiftpm/Model
+      - TutorNotes.swiftpm/Library
+      - TutorNotes.swiftpm/Editor
+      - TutorNotes.swiftpm/Canvas
+      - TutorNotes.swiftpm/Rendering
+      - TutorNotes.swiftpm/Math
+      - TutorNotes.swiftpm/Tutor
+      - TutorNotes.swiftpm/Utilities
+      - TutorNotes.swiftpm/Demo
+      - TutorNotes.swiftpm/Assets.xcassets
     settings:
       base:
         PRODUCT_NAME: Tutor Notes

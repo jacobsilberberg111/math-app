@@ -138,8 +138,8 @@ final class TutorEngine {
     func send(_ text: String, focus: (page: Int, rect: CGRect)? = nil, displayText: String? = nil) {
         let trimmed = text.trimmed
         guard !trimmed.isEmpty else { return }
-        guard settings.hasAPIKey else {
-            chat.append(ChatItem(role: .notice, text: "Add your Anthropic API key in Settings to start tutoring."))
+        guard settings.isTutorConfigured else {
+            chat.append(ChatItem(role: .notice, text: "Connect your tutor in Settings (tutor server or API key) to start."))
             return
         }
         cancelObservation()
@@ -376,7 +376,7 @@ final class TutorEngine {
     private func streamOnce(messages: [JSONValue], model: String, effort: TutorEffort, itemID: UUID?,
                             executor: CanvasActionExecutor, observation: Bool) async throws -> StreamResult {
         let (body, betas) = requestBody(messages: messages, model: model, effort: effort)
-        let client = AnthropicClient(apiKey: settings.apiKey.trimmed)
+        let client = settings.makeClient()
         var attempt = 0
         while true {
             var receivedAnything = false
@@ -695,9 +695,9 @@ final class TutorEngine {
         let attachment = TutorAttachment(id: id, name: name, kind: kind, mimeType: mime, localFile: local, sizeBytes: data.count)
         document.content.attachments.append(attachment)
         document.markDirty()
-        guard settings.hasAPIKey else { return }
+        guard settings.isTutorConfigured else { return }
         uploading.insert(id)
-        let client = AnthropicClient(apiKey: settings.apiKey.trimmed)
+        let client = settings.makeClient()
         Task { [weak self] in
             do {
                 let fileID = try await client.uploadFile(data: data, filename: name, mimeType: mime)
@@ -747,7 +747,7 @@ final class TutorEngine {
 
     private func scheduleGlance() {
         glanceTimer?.cancel()
-        guard watching, settings.proactive, settings.hasAPIKey else { return }
+        guard watching, settings.proactive, settings.isTutorConfigured else { return }
         let delay = max(1.5, settings.pauseDelay)
         glanceTimer = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))

@@ -97,6 +97,7 @@ struct LibraryView: View {
             Text("The note, its recordings and its tutor conversation will be deleted.")
         }
         .onAppear {
+            DemoDirector.shared.libraryAppeared(library: library) { meta in openNote = meta }
             if !settings.hasSeenOnboarding { showOnboarding = true }
         }
     }
@@ -299,7 +300,6 @@ struct NoteCard: View {
 struct OnboardingView: View {
     @EnvironmentObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
-    @State private var key = ""
 
     var body: some View {
         // Scrolls so it still fits in a form-size sheet, in landscape, and with the keyboard up.
@@ -308,7 +308,7 @@ struct OnboardingView: View {
         }
         .safeAreaInset(edge: .bottom) {
             Button { finish() } label: {
-                Text(key.trimmed.isEmpty ? "Continue without a key" : "Get started").frame(maxWidth: .infinity).padding(.vertical, 6)
+                Text(settings.isTutorConfigured ? "Get started" : "Continue without the tutor for now").frame(maxWidth: .infinity).padding(.vertical, 6)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
@@ -321,7 +321,6 @@ struct OnboardingView: View {
     }
 
     private func finish() {
-        if !key.trimmed.isEmpty { settings.apiKey = key.trimmed }
         settings.hasSeenOnboarding = true
         dismiss()
     }
@@ -342,14 +341,9 @@ struct OnboardingView: View {
                 row("chart.xyaxis.line", "Real math on the page", "Typeset algebra, graphs with asymptotes and shading, number lines, tables and diagrams.")
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("Anthropic API key").font(.headline)
-                SecureField("sk-ant-…", text: $key)
-                    .textFieldStyle(.roundedBorder)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onSubmit { finish() }
-                Text("Get one at console.anthropic.com. It's kept in the Keychain on this iPad and only sent to api.anthropic.com. You can add it later in Settings.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                Text("Connect your tutor").font(.headline)
+                ConnectionForm()
+                Text("You can change this later in Settings.").font(.footnote).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

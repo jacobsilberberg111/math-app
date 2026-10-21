@@ -7,7 +7,11 @@ struct AnthropicError: LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch type {
-        case "authentication_error": return "Your Anthropic API key was rejected. Check it in Settings."
+        case "authentication_error":
+            if message.localizedCaseInsensitiveContains("app token") {
+                return "The tutor server didn't accept the access token. Check it in Settings (it must match APP_TOKEN on the server)."
+            }
+            return "The Anthropic API key was rejected. Check it in Settings (or the server's ANTHROPIC_API_KEY)."
         case "permission_error": return "This API key doesn't have access to that model or feature."
         case "not_found_error": return message.isEmpty ? "Not found." : message
         case "rate_limit_error": return "Rate limited by the API — try again in a moment."
@@ -41,16 +45,37 @@ enum StreamEvent: Sendable {
     case messageStop
 }
 
-/// Minimal raw-HTTP client for the Claude API (there is no official Swift SDK).
+/// Minimal raw-HTTP client for the Claude API (there is no official Swift SDK). Talks either to
+/// api.anthropic.com with an API key, or to the Tutor Notes server (see /server), which adds the
+/// key itself and only needs the app's access token.
 struct AnthropicClient: Sendable {
-    let apiKey: String
-    static let baseURL = URL(string: "https://api.anthropic.com")!
+    enum Auth: Sendable {
+        case apiKey(String)
+        case appToken(String)
+    }
+
+    let baseURL: URL
+    let auth: Auth
+    static let anthropicURL = URL(string: "https://api.anthropic.com")!
     static let apiVersion = "2023-06-01"
 
+    init(apiKey: String) {
+        baseURL = AnthropicClient.anthropicURL
+        auth = .apiKey(apiKey)
+    }
+
+    init(serverURL: URL, appToken: String) {
+        baseURL = serverURL
+        auth = .appToken(appToken)
+    }
+
     private func request(path: String, method: String = "POST", betas: [String] = []) -> URLRequest {
-        var req = URLRequest(url: AnthropicClient.baseURL.appendingPathComponent(path))
+        var req = URLRequest(url: baseURL.appendingPathComponent(path))
         req.httpMethod = method
-        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        switch auth {
+        case .apiKey(let key): req.setValue(key, forHTTPHeaderField: "x-api-key")
+        case .appToken(let token): req.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+        }
         req.setValue(AnthropicClient.apiVersion, forHTTPHeaderField: "anthropic-version")
         if !betas.isEmpty {
             req.setValue(betas.joined(separator: ","), forHTTPHeaderField: "anthropic-beta")

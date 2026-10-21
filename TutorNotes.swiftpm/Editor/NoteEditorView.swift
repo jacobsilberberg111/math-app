@@ -73,7 +73,8 @@ struct NoteEditorView: View {
         .background(Color(uiColor: .systemBackground))
         .onAppear {
             model.document.onMetaChanged = { [weak library] meta in library?.update(meta) }
-            if !settings.hasAPIKey && !settings.hasSeenOnboarding { model.showTutor = true }
+            DemoDirector.shared.editorAppeared(model)
+            if !settings.isTutorConfigured && !settings.hasSeenOnboarding { model.showTutor = true }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {

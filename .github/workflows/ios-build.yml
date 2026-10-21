@@ -9,15 +9,14 @@ concurrency:
 
 jobs:
   xcode-project:
-    name: Build app (Xcode project, simulator + unsigned .ipa)
+    name: Build app, sideloadable .ipa, demo video
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       - name: Toolchain
         run: |
-          ls /Applications | grep -i xcode || true
           xcodebuild -version
           xcrun simctl list devices available | grep -i ipad | head -20 || true
 
@@ -31,16 +30,15 @@ jobs:
           set -o pipefail
           xcodebuild -project TutorNotes.xcodeproj -scheme TutorNotes -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
-            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee sim-build.log | grep -E "error:|warning: .*(isolat|Sendable)|BUILD" || true
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee sim-build.log | grep -E "error:|warning:|BUILD" | sort -u | head -200 || true
           grep -q "BUILD SUCCEEDED" sim-build.log
+          echo "Swift files compiled: $(grep -c 'SwiftCompile normal' sim-build.log || true)"
 
       - name: Compiler errors summary
         if: failure()
         run: |
           echo "==== ERRORS ===="
-          grep -E "^/.*error:" sim-build.log | sort -u | head -150 || true
-          echo "==== CONTEXT ===="
-          grep -B2 -A6 -E "^/.*error:" sim-build.log | head -400 || true
+          grep -E "error:" sim-build.log | sort -u | head -150 || true
 
       - name: Build Release for device (unsigned)
         run: |
@@ -64,34 +62,70 @@ jobs:
           path: TutorNotes-unsigned.ipa
           retention-days: 30
 
-      - name: Launch in simulator and screenshot
-        continue-on-error: true
+      - name: Boot iPad simulator
         run: |
-          DEVICE=$(xcrun simctl list devices available | grep -E "iPad Pro 13|iPad Pro \(12.9|iPad Air 13|iPad Pro 11|iPad" | head -1 | sed -E 's/^ *(.*) \(([0-9A-F-]{36})\).*/\2/')
-          echo "Device: $DEVICE"
+          DEVICE=$(xcrun simctl list devices available | grep -E "iPad Pro 13-inch" | head -1 | grep -oE "[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}")
+          if [ -z "$DEVICE" ]; then DEVICE=$(xcrun simctl list devices available | grep -E "iPad" | head -1 | grep -oE "[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}"); fi
+          echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
+          xcrun simctl list devices | grep "$DEVICE"
           xcrun simctl boot "$DEVICE" || true
           xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl status_bar "$DEVICE" override --time 9:41 --batteryState charged --batteryLevel 100 --wifiBars 3 || true
           APP=$(find build/sim/Build/Products/Debug-iphonesimulator -maxdepth 1 -name "*.app" | head -1)
           xcrun simctl install "$DEVICE" "$APP"
+
+      - name: Screenshots
+        continue-on-error: true
+        run: |
           mkdir -p screenshots
           xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding
-          sleep 8
-          xcrun simctl io "$DEVICE" screenshot screenshots/library.png
+          sleep 6
+          xcrun simctl io "$DEVICE" screenshot screenshots/1-library.png
           xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
           xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding -uitest-open-first-note
-          sleep 10
-          xcrun simctl io "$DEVICE" screenshot screenshots/editor.png
+          sleep 7
+          xcrun simctl io "$DEVICE" screenshot screenshots/2-editor.png
           xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
           xcrun simctl launch "$DEVICE" com.example.tutornotes -uitest-skip-onboarding -uitest-open-first-note -uitest-show-tutor
-          sleep 10
-          xcrun simctl io "$DEVICE" screenshot screenshots/editor-tutor.png
-          ls -la screenshots
+          sleep 7
+          xcrun simctl io "$DEVICE" screenshot screenshots/3-editor-tutor.png
+          xcrun simctl terminate "$DEVICE" com.example.tutornotes || true
+
+      - name: Record demo video
+        continue-on-error: true
+        run: |
+          mkdir -p video
+          # Fresh data so the demo starts from the welcome note.
+          xcrun simctl uninstall "$DEVICE" com.example.tutornotes || true
+          APP=$(find build/sim/Build/Products/Debug-iphonesimulator -maxdepth 1 -name "*.app" | head -1)
+          xcrun simctl install "$DEVICE" "$APP"
+          xcrun simctl io "$DEVICE" recordVideo --codec=h264 --force video/demo.mp4 &
+          REC=$!
+          sleep 3
+          xcrun simctl launch --console-pty "$DEVICE" com.example.tutornotes -demo-script > video/app-log.txt 2>&1 &
+          for i in $(seq 1 180); do
+            if grep -q "DEMO_COMPLETE" video/app-log.txt 2>/dev/null; then echo "demo finished after ${i}s"; break; fi
+            sleep 1
+          done
+          sleep 2
+          kill -INT $REC || true
+          wait $REC || true
+          xcrun simctl io "$DEVICE" screenshot video/final-frame.png || true
+          ls -la video
+          tail -40 video/app-log.txt || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: screenshots
           path: screenshots
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-video
+          path: video
           retention-days: 14
 
   playgrounds-package:
@@ -105,10 +139,21 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -version
-          xcodebuild -list || true
           xcodebuild -scheme "Tutor Notes" -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ../pkg-build.log | grep -E "error:|BUILD" || true
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ../pkg-build.log | grep -E "error:|warning:|BUILD" | sort -u | head -200 || true
           grep -q "BUILD SUCCEEDED" ../pkg-build.log
+          echo "Swift files compiled: $(grep -c 'SwiftCompile normal' ../pkg-build.log || true)"
       - name: Errors summary
         if: failure()
         run: grep -E "error:" pkg-build.log | sort -u | head -100 || true
+
+  server:
+    name: Railway server tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+        working-directory: server
