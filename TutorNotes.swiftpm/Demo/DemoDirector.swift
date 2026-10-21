@@ -76,6 +76,11 @@ final class DemoDirector {
         print("DEMO: \(message)")
     }
 
+    /// The same, callable from views; prints only during the scripted demo.
+    static func trace(_ message: String) {
+        if isDemo { print("DEMO: \(message)") }
+    }
+
     // MARK: Helpers
 
     private func wait(_ seconds: Double) async {
@@ -273,9 +278,20 @@ final class DemoDirector {
         await wait(2.6)
         model.dismissQuickMenu()
         model.tools.kind = .pen
+        log("showing tutor panel")
         withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) { model.showTutor = true }
-        await wait(1.2)
-        log("tutor panel shown, canvas width \(Int(canvas.view.bounds.width))")
+        await wait(0.3)
+        log("0.3s: showTutor \(model.showTutor), canvas width \(Int(canvas.view.bounds.width))")
+        await wait(0.9)
+        log("1.2s: showTutor \(model.showTutor), canvas width \(Int(canvas.view.bounds.width))")
+        if canvas.view.bounds.width > 1000 {
+            // Diagnostic: does a plain (unanimated) change get through?
+            model.showTutor = false
+            await wait(0.3)
+            model.showTutor = true
+            await wait(1.0)
+            log("after plain toggle: canvas width \(Int(canvas.view.bounds.width))")
+        }
 
         // 5. A full tutor turn: graph, typeset working, explanation, a new practice question.
         let reply = beginTutorTurn(model, studentText: "Can you graph it and show me where the roots are?",

@@ -111,6 +111,7 @@ struct NoteEditorView: View {
 
     private var canvasArea: some View {
         GeometryReader { geo in
+            let _ = DemoDirector.trace("canvas area width \(Int(geo.size.width))")
             ZStack(alignment: .top) {
                 CanvasRepresentable(model: model, config: model.tools.config(settings: settings))
                     .ignoresSafeArea(.container, edges: .bottom)
@@ -184,6 +185,7 @@ private struct TutorSidePanel: View {
     private static let width: CGFloat = 392
 
     var body: some View {
+        let _ = DemoDirector.trace("side panel body: showTutor \(model.showTutor), sizeClass \(String(describing: sizeClass))")
         if sizeClass != .compact {
             HStack(spacing: 0) {
                 Divider()
@@ -191,6 +193,9 @@ private struct TutorSidePanel: View {
                     .frame(width: Self.width)
             }
             .frame(width: model.showTutor ? Self.width + 1 : 0, alignment: .leading)
+            .background(GeometryReader { g in
+                Color.clear.onChange(of: g.size.width) { _, w in DemoDirector.trace("side panel width \(Int(w))") }
+            })
             .clipped()
             .allowsHitTesting(model.showTutor)
             .accessibilityHidden(!model.showTutor)
