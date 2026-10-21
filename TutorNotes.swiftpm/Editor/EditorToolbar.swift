@@ -2,15 +2,22 @@ import SwiftUI
 import PhotosUI
 
 /// Top navigation row: back, title, undo/redo, pages, insert, record, share, tutor.
+/// (Explicitly main-actor: with the iOS 17 SDK nothing here would infer it, and `commitTitle`
+/// touches the main-actor model.)
+@MainActor
 struct EditorTopBar: View {
     @Bindable var model: EditorModel
     var onClose: () -> Void
     var onInsertPhoto: () -> Void
     var onImportPDF: () -> Void
     var onExport: () -> Void
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var editingTitle = false
     @State private var titleDraft = ""
     @FocusState private var titleFocused: Bool
+
+    /// Narrow windows fold Pages and Export into the insert menu so the bar still fits.
+    private var compact: Bool { sizeClass == .compact }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -26,8 +33,10 @@ struct EditorTopBar: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 320)
                     .focused($titleFocused)
-                    .onSubmit(commitTitle)
+                    .onSubmit { commitTitle() }
                     .onChange(of: titleFocused) { _, focused in if !focused { commitTitle() } }
+                    // Focusing in the same update that inserts the field is unreliable; do it once it's there.
+                    .onAppear { titleFocused = true }
             } else {
                 Button {
                     titleDraft = model.document.meta.title
@@ -52,8 +61,10 @@ struct EditorTopBar: View {
             Group {
                 BarButton(symbol: "arrow.uturn.backward", label: "Undo", enabled: model.canUndo) { model.undo() }
                 BarButton(symbol: "arrow.uturn.forward", label: "Redo", enabled: model.canRedo) { model.redo() }
-                Divider().frame(height: 22).padding(.horizontal, 4)
-                BarButton(symbol: "square.grid.2x2", label: "Pages") { model.showPages = true }
+                if !compact {
+                    Divider().frame(height: 22).padding(.horizontal, 4)
+                    BarButton(symbol: "square.grid.2x2", label: "Pages") { model.showPages = true }
+                }
                 Menu {
                     Button { onInsertPhoto() } label: { Label("Photo", systemImage: "photo") }
                     Button { onImportPDF() } label: { Label("PDF Pages", systemImage: "doc.richtext") }
@@ -61,6 +72,11 @@ struct EditorTopBar: View {
                     Divider()
                     Button { model.document.appendPage(); model.canvas?.scrollToPage(model.pageCount - 1) } label: { Label("New Page", systemImage: "doc.badge.plus") }
                     Button { model.showPaper = true } label: { Label("Paper Style", systemImage: "square.grid.3x3") }
+                    if compact {
+                        Divider()
+                        Button { model.showPages = true } label: { Label("Pages", systemImage: "square.grid.2x2") }
+                        Button { onExport() } label: { Label("Export", systemImage: "square.and.arrow.up") }
+                    }
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 17, weight: .medium))
@@ -68,9 +84,11 @@ struct EditorTopBar: View {
                 }
                 .accessibilityLabel("Insert")
                 RecordButton(audio: model.audio)
-                BarButton(symbol: "square.and.arrow.up", label: "Export") { onExport() }
+                if !compact {
+                    BarButton(symbol: "square.and.arrow.up", label: "Export") { onExport() }
+                }
             }
-            TutorToggleButton(model: model)
+            TutorToggleButton(model: model, showsLabel: !compact)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
@@ -108,8 +126,14 @@ struct RecordButton: View {
     let audio: AudioController
 
     var body: some View {
-        Button {
-            audio.toggleRecording()
+        // Tap records; long-press brings back the playback bar after it was closed.
+        Menu {
+            Button {
+                audio.showsPlayer = true
+            } label: {
+                Label("Show Playback", systemImage: "play.circle")
+            }
+            .disabled(audio.isRecording || audio.activeRecording == nil)
         } label: {
             ZStack {
                 if audio.isRecording {
@@ -120,6 +144,8 @@ struct RecordButton: View {
                     .foregroundStyle(audio.isRecording ? Color.red : Color.accentColor)
             }
             .frame(width: 40, height: 40)
+        } primaryAction: {
+            audio.toggleRecording()
         }
         .accessibilityLabel(audio.isRecording ? "Stop recording" : "Record audio")
     }
@@ -128,6 +154,7 @@ struct RecordButton: View {
 /// The tutor button glows while the tutor is thinking or watching.
 struct TutorToggleButton: View {
     @Bindable var model: EditorModel
+    var showsLabel = true
     @EnvironmentObject var settings: AppSettings
 
     var body: some View {
@@ -136,7 +163,9 @@ struct TutorToggleButton: View {
         } label: {
             HStack(spacing: 6) {
                 TutorOrb(active: model.tutor.isBusy || model.tutor.isObserving, size: 22)
-                Text("Tutor").font(.system(size: 15, weight: .semibold))
+                if showsLabel {
+                    Text("Tutor").font(.system(size: 15, weight: .semibold))
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
@@ -187,6 +216,7 @@ struct TutorOrb: View {
 struct EditorToolStrip: View {
     @Bindable var model: EditorModel
     @EnvironmentObject var settings: AppSettings
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showPenStyles = false
     @State private var editingColorIndex: Int?
     @State private var editingWidthIndex: Int?
@@ -194,6 +224,28 @@ struct EditorToolStrip: View {
     var tools: ToolState { model.tools }
 
     var body: some View {
+        Group {
+            if sizeClass == .compact {
+                // Narrow windows: the whole strip scrolls.
+                ScrollView(.horizontal, showsIndicators: false) { strip(contextual) }
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                // Tools + colours + widths + toggles are wider than most iPads in portrait, so
+                // the middle section scrolls rather than pushing the strip off both edges.
+                strip(
+                    ScrollView(.horizontal, showsIndicators: false) { contextual }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                )
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private func strip(_ middle: some View) -> some View {
         HStack(spacing: 10) {
             HStack(spacing: 2) {
                 ForEach([CanvasToolKind.pen, .highlighter, .eraser, .lasso, .text, .select], id: \.self) { kind in
@@ -204,9 +256,15 @@ struct EditorToolStrip: View {
             }
             .padding(4)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.secondary.opacity(0.08)))
+            // Apple Pencil double-tap ("Show colour palette") and squeeze ("Tool palette") land here.
+            .popover(isPresented: $model.palettePresented) {
+                ColorPalettePicker(hex: Binding(get: { tools.colors[safe: tools.colorIndex] ?? "#1F2328" },
+                                                set: { tools.setColor($0, at: tools.colorIndex) }),
+                                   highlighter: tools.kind == .highlighter)
+                    .presentationCompactAdaptation(.popover)
+            }
 
-            contextual
-                .frame(maxWidth: .infinity, alignment: .leading)
+            middle
 
             HStack(spacing: 2) {
                 ToggleIcon(symbol: "ruler", isOn: tools.rulerActive, label: "Ruler") { tools.rulerActive.toggle() }
@@ -220,10 +278,6 @@ struct EditorToolStrip: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
     }
 
     @ViewBuilder

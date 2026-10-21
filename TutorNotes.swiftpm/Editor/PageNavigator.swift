@@ -62,6 +62,9 @@ struct PageNavigator: View {
                 Button("Delete Page", role: .destructive) {
                     if let i = pendingDelete { model.document.deletePage(i) }
                     pendingDelete = nil
+                    // The canvas only reports page changes on scroll; don't leave "Page 5 of 4"
+                    // (or make Paper "this page" fall through to every page).
+                    model.currentPage = min(model.currentPage, model.pageCount - 1)
                     refresh()
                 }
             }

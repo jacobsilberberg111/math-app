@@ -42,11 +42,13 @@ extension NoteCanvasViewController {
             let path = ElementRenderer.presencePath(e, env: environment()).map {
                 CGPoint(x: $0.x + docFrame.minX, y: $0.y + docFrame.minY)
             }
-            presence.setMode(.writing)
+            // Move before setMode: setMode fades alpha in (the model value changes at once), and glide
+            // only jumps straight to the target while the presence is still hidden.
             if let first = path.first {
                 presence.glide(to: first, duration: 0.25)
                 presence.follow(path, duration: job.duration)
             }
+            presence.setMode(.writing)
             revealStart = CACurrentMediaTime()
             if displayLink == nil {
                 let link = CADisplayLink(target: self, selector: #selector(revealTick(_:)))
@@ -83,6 +85,8 @@ extension NoteCanvasViewController {
         activeReveal = nil
         displayLink?.invalidate()
         displayLink = nil
+        // Nothing else returns the presence from writing once the queue is gone.
+        if case .writing = presence.mode { presence.setMode(.idle) }
     }
 
     var isRevealing: Bool { activeReveal != nil || !revealQueue.isEmpty }
@@ -99,8 +103,8 @@ extension NoteCanvasViewController {
             let p = l.caretPosition(afterChars: l.totalChars)
             caret = CGPoint(x: docFrame.minX + inset.left + p.x, y: docFrame.minY + inset.top + p.y)
         }
-        presence.setMode(.writing)
         presence.glide(to: caret, duration: 0.18)
+        presence.setMode(.writing)
         if !isVisible(docFrame) && !studentIsActive {
             scrollToReveal(docFrame)
         }
@@ -117,17 +121,17 @@ extension NoteCanvasViewController {
             if !isRevealing { presence.setMode(.idle) }
         case .looking(let rect):
             guard !isRevealing else { return }
-            presence.setMode(.looking)
             presence.glide(to: CGPoint(x: rect.maxX, y: rect.minY), duration: 0.6)
+            presence.setMode(.looking)
         case .thinking(let point):
             guard !isRevealing else { return }
-            presence.setMode(.thinking)
             if let point {
                 presence.glide(to: point, duration: 0.5)
             } else if presence.alpha < 0.05 {
                 let r = visibleDocRect
                 presence.glide(to: CGPoint(x: r.maxX - 60 / zoom, y: r.minY + 60 / zoom), duration: 0)
             }
+            presence.setMode(.thinking)
         }
     }
 
@@ -140,8 +144,8 @@ extension NoteCanvasViewController {
         let pulse = PulseView(frame: docRect.insetBy(dx: -8, dy: -8), color: color, zoom: zoom)
         chrome.insertSubview(pulse, belowSubview: presence)
         pulse.run()
-        presence.setMode(.idle)
         presence.glide(to: CGPoint(x: docRect.maxX, y: docRect.minY))
+        presence.setMode(.idle)
         if let message, !message.trimmed.isEmpty {
             showBubble(message, near: docRect)
         }
@@ -178,7 +182,8 @@ extension NoteCanvasViewController {
             replayTime = nil
             replayRevealedCount = -1
             isApplyingDrawing = true
-            canvasView.drawing = replaySourceDrawing ?? document.drawing
+            // The document is authoritative: the tutor or page edits may have changed the ink meanwhile.
+            canvasView.drawing = document.drawing
             isApplyingDrawing = false
             replaySourceDrawing = nil
             apply(tool: tool)
@@ -191,6 +196,8 @@ extension NoteCanvasViewController {
         }
         replayTime = time
         canvasView.drawingGestureRecognizer.isEnabled = false
+        // No ink is committed during replay, so a shape snap would leave its preview stuck on screen.
+        strokeObserver?.isEnabled = false
         guard let source = replaySourceDrawing, let time else { return }
         let revealed = source.strokes.filter { $0.path.creationDate <= time }.count
         guard revealed != replayRevealedCount else { return }

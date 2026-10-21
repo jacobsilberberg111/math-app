@@ -486,13 +486,17 @@ final class PulseView: UIView {
 /// UITextView used for editing text boxes in place. Supports Scribble automatically.
 final class CanvasTextView: UITextView {
     var elementID: String?
+    /// Typing undo stays with this short-lived view instead of landing on the note's shared stack.
+    private let typingUndoManager = UndoManager()
+    override var undoManager: UndoManager? { typingUndoManager }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         backgroundColor = UIColor.systemBlue.withAlphaComponent(0.04)
         isScrollEnabled = false
         textContainerInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
-        textContainer?.lineFragmentPadding = 0
+        // `self.`: the init parameter of the same name is nil here. Must match PlainTextRenderer (no padding).
+        self.textContainer.lineFragmentPadding = 0
         layer.borderColor = UIColor.systemBlue.withAlphaComponent(0.5).cgColor
         layer.borderWidth = 1
         layer.cornerRadius = 4
@@ -505,6 +509,9 @@ final class CanvasTextView: UITextView {
 
 /// Shape preview while the pencil is held after drawing (draw-and-hold snapping).
 final class ShapePreviewLayer: CAShapeLayer {
+    /// No implicit animations: the preview must track the pencil exactly as it resizes the shape.
+    override func action(forKey event: String) -> CAAction? { nil }
+
     func show(_ shape: RecognizedShape, color: UIColor, width: CGFloat) {
         let pts = shape.outline(spacing: 2)
         let path = CGMutablePath()

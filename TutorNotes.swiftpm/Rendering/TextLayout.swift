@@ -103,10 +103,13 @@ final class RichTextLayout {
         func append(_ token: Token) {
             let current = lineWidths[lineWidths.count - 1]
             if !token.isSpace && current > 0 && current + token.width > maxWidth {
-                // Drop trailing spaces before wrapping.
-                while let last = lines[lines.count - 1].last, last.isSpace {
-                    lines[lines.count - 1].removeLast()
-                    lineWidths[lineWidths.count - 1] -= last.width
+                // Collapse trailing spaces before wrapping (zero width, but keep their character
+                // count so reveal progress stays in step with `totalChars`).
+                var j = lines[lines.count - 1].count - 1
+                while j >= 0, lines[lines.count - 1][j].isSpace {
+                    lineWidths[lineWidths.count - 1] -= lines[lines.count - 1][j].width
+                    lines[lines.count - 1][j].width = 0
+                    j -= 1
                 }
                 lines.append([])
                 lineWidths.append(0)

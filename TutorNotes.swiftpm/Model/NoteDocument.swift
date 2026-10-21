@@ -94,8 +94,10 @@ final class NoteDocument {
 
     func saveNow() {
         saveTask?.cancel()
+        // Only real edits count as a modification; opening/closing or backgrounding a note
+        // shouldn't reorder the library's "Date Modified" sort.
+        if isDirty { meta.modifiedAt = Date() }
         isDirty = false
-        meta.modifiedAt = Date()
         meta.pageCount = content.pages.count
         meta.hasAudio = !content.recordings.isEmpty
         let folder = self.folder
@@ -287,11 +289,12 @@ final class NoteDocument {
         for i in content.elements.indices where content.elements[i].pageIndex >= insertAt {
             content.elements[i].pageIndex += 1
         }
-        var d = drawing
-        for i in d.strokes.indices where d.strokes[i].renderBounds.midY > shiftFromY {
-            d.strokes[i].transform = d.strokes[i].transform.concatenating(CGAffineTransform(translationX: 0, y: dy))
+        // Work on a local copy: every `PKDrawing.strokes` access bridges the whole array.
+        var strokes = drawing.strokes
+        for i in strokes.indices where strokes[i].renderBounds.midY > shiftFromY {
+            strokes[i].transform = strokes[i].transform.concatenating(CGAffineTransform(translationX: 0, y: dy))
         }
-        drawing = d
+        drawing.strokes = strokes
         undoManager.removeAllActions()
         canvas?.documentDidChangePages()
         canvas?.documentDidReplaceDrawing()
@@ -303,12 +306,12 @@ final class NoteDocument {
         guard content.pages.count > 1, content.pages.indices.contains(index) else { return }
         let rect = pageRect(index).insetBy(dx: -NoteDocument.sideMargin, dy: -NoteDocument.pageGap / 2)
         let dy = pageSize.height + NoteDocument.pageGap
-        var d = drawing
-        d.strokes.removeAll { rect.contains($0.renderBounds.center) }
-        for i in d.strokes.indices where d.strokes[i].renderBounds.midY > rect.maxY {
-            d.strokes[i].transform = d.strokes[i].transform.concatenating(CGAffineTransform(translationX: 0, y: -dy))
+        var strokes = drawing.strokes
+        strokes.removeAll { rect.contains($0.renderBounds.center) }
+        for i in strokes.indices where strokes[i].renderBounds.midY > rect.maxY {
+            strokes[i].transform = strokes[i].transform.concatenating(CGAffineTransform(translationX: 0, y: -dy))
         }
-        drawing = d
+        drawing.strokes = strokes
         let removedIDs = content.elements.filter { $0.pageIndex == index }.map(\.id)
         content.elements.removeAll { $0.pageIndex == index }
         for i in content.elements.indices where content.elements[i].pageIndex > index {
@@ -375,7 +378,10 @@ final class NoteDocument {
         if longest > maxSide {
             let scale = maxSide / longest
             let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-            img = UIGraphicsImageRenderer(size: size).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+            // Scale 1 so the result really is `maxSide` pixels (the default format uses the screen scale).
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            img = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         }
         guard let data = img.jpegData(compressionQuality: 0.86) else { return nil }
         let name = "img-\(UUID().uuidString.prefix(8)).jpg"

@@ -85,8 +85,9 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         canvasView.isOpaque = false
         // Ink colours must never be inverted by dark mode: the paper is always light.
         canvasView.overrideUserInterfaceStyle = .light
-        canvasView.delegate = self
+        // Load the ink before setting the delegate so opening a note doesn't report it as a change.
         canvasView.drawing = document.drawing
+        canvasView.delegate = self
         canvasView.alwaysBounceVertical = true
         canvasView.contentInsetAdjustmentBehavior = .never
         canvasView.minimumZoomScale = 0.4
@@ -133,9 +134,16 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
                 canvasView.setZoomScale(fit, animated: false)
             }
             layoutDocument()
-            if hasLaidOut {
-                canvasView.contentOffset = CGPoint(x: canvasView.contentOffset.x, y: max(0, topDocY * zoom))
-            }
+            // setZoomScale zooms about the centre of the view, which can leave the offset outside the
+            // new content range (e.g. the page shifted sideways on open); clamp it back.
+            let inset = canvasView.contentInset
+            let maxX = max(-inset.left, canvasView.contentSize.width - canvasView.bounds.width + inset.right)
+            let maxY = max(0, canvasView.contentSize.height - canvasView.bounds.height)
+            let x = hasLaidOut ? min(max(canvasView.contentOffset.x, -inset.left), maxX) : -inset.left
+            let y = hasLaidOut ? min(max(0, topDocY * zoom), maxY) : 0
+            canvasView.contentOffset = CGPoint(x: x, y: y)
+            // Programmatic zooms don't end in scrollViewDidEndZooming, so re-render elements for the new scale.
+            rasterizeForCurrentZoom()
             lastLayoutWidth = width
             hasLaidOut = true
         }
@@ -205,16 +213,20 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         return document.content.pages.indices.filter { document.pageRect($0).intersects(r) }
     }
 
+    // These also arrive for the in-place CanvasTextView (a UIScrollView whose delegate is self).
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        guard scrollView === canvasView else { return }
         userHasZoomed = abs(zoom - fitZoom) > 0.01
         layoutDocument()
     }
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        guard scrollView === canvasView else { return }
         rasterizeForCurrentZoom()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === canvasView else { return }
         updateVisiblePages()
         let page = currentPageIndex
         if page != lastReportedPage {
@@ -392,9 +404,16 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     }
 
     func documentDidReplaceDrawing() {
-        isApplyingDrawing = true
-        canvasView.drawing = document.drawing
-        isApplyingDrawing = false
+        if replayTime != nil {
+            // Mid-replay: re-render the replay from the new ink (the canvas shows a faded copy).
+            replaySourceDrawing = document.drawing
+            replayRevealedCount = -1
+            setReplay(time: replayTime)
+        } else {
+            isApplyingDrawing = true
+            canvasView.drawing = document.drawing
+            isApplyingDrawing = false
+        }
         host?.canvasUndoStateChanged()
     }
 
@@ -422,7 +441,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         canvasView.panGestureRecognizer.minimumNumberOfTouches = newTool.kind == .tutor ? 2 : 1
         regionPan?.isEnabled = newTool.kind == .tutor
         strokeObserver?.acceptsFinger = newTool.fingerDrawing
-        strokeObserver?.isEnabled = newTool.shapeRecognition && (newTool.kind == .pen || newTool.kind == .highlighter)
+        strokeObserver?.isEnabled = newTool.shapeRecognition && (newTool.kind == .pen || newTool.kind == .highlighter) && replayTime == nil
         if !newTool.kind.usesPencilKit { hoverPreview.hide() }
     }
 
@@ -433,7 +452,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         let newDrawing = canvasView.drawing
         let oldCount = document.drawing.strokes.count
         document.canvasDrawingChanged(newDrawing)
-        if newDrawing.strokes.count > oldCount {
+        // The pixel eraser splits strokes, which also grows the count; that isn't new writing.
+        if newDrawing.strokes.count > oldCount, tool.kind != .eraser {
             let added = newDrawing.strokes[oldCount...].map(\.renderBounds)
             applyPendingSnapIfReady()
             host?.canvasStudentWrote(docRects: added)

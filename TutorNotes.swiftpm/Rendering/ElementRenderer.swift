@@ -271,10 +271,17 @@ enum ElementRenderer {
         if ink.purpose == .highlight {
             ctx.setBlendMode(.multiply)
         }
+        // Highlighter strokes are translucent: stroke each as one path so the round caps of
+        // neighbouring segments don't stack into dark blotches.
+        let continuous = ink.purpose == .highlight
         for (si, pts) in strokes.enumerated() {
             guard pts.count > 1, budget > 0 else { break }
             let len = lengths[si]
             var traveled: CGFloat = 0
+            if continuous {
+                ctx.setLineWidth(ink.width)
+                ctx.move(to: pts[0])
+            }
             for i in 1..<pts.count {
                 let a = pts[i - 1], b = pts[i]
                 let d = a.distance(to: b)
@@ -284,16 +291,21 @@ enum ElementRenderer {
                     let t = budget / d
                     end = CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
                 }
-                // Pen-like taper at both ends of each stroke.
-                let pos = len > 0 ? (traveled + d / 2) / len : 0.5
-                let taper = ink.purpose == .highlight ? 1 : min(1, 0.55 + min(pos, 1 - pos) * 4.5)
-                ctx.setLineWidth(ink.width * taper)
-                ctx.move(to: a)
-                ctx.addLine(to: end)
-                ctx.strokePath()
+                if continuous {
+                    ctx.addLine(to: end)
+                } else {
+                    // Pen-like taper at both ends of each stroke.
+                    let pos = len > 0 ? (traveled + d / 2) / len : 0.5
+                    let taper = min(1, 0.55 + min(pos, 1 - pos) * 4.5)
+                    ctx.setLineWidth(ink.width * taper)
+                    ctx.move(to: a)
+                    ctx.addLine(to: end)
+                    ctx.strokePath()
+                }
                 traveled += d
                 budget -= d
             }
+            if continuous { ctx.strokePath() }
         }
         ctx.setBlendMode(.normal)
         if hasLabel, let label = ink.label, progress > inkShare {
@@ -329,9 +341,16 @@ enum ElementRenderer {
     }
 
     static func formatTick(_ v: Double, step: Double) -> String {
-        if abs(v) < step * 1e-6 { return "0" }
-        if step >= 1 && v == v.rounded() { return String(Int(v)) }
-        let decimals = max(0, min(4, Int(-floor(log10(step)))))
+        let tol = abs(step) * 1e-6
+        if abs(v) < tol { return "0" }
+        if step >= 1 && abs(v - v.rounded()) < tol && abs(v) < 1e15 { return String(Int(v.rounded())) }
+        // Enough decimals to show both the step and the value, e.g. 0.25, 2.5, -1.5 (number line
+        // starting at a half), or π/2 ≈ 1.57.
+        let decimals = (0...4).first { d in
+            let scale = pow(10, Double(d))
+            return abs(v * scale - (v * scale).rounded()) < tol * scale
+                && abs(step * scale - (step * scale).rounded()) < tol * scale
+        } ?? 2
         return String(format: "%.\(decimals)f", v)
     }
 
@@ -356,8 +375,11 @@ enum ElementRenderer {
             l.draw(in: ctx, origin: CGPoint(x: rect.minX + 14, y: rect.minY + 8), color: dark.withAlphaComponent(axesAlpha))
         }
 
-        let xStep = g.xStep ?? niceStep(g.xMax - g.xMin)
-        let yStep = g.yStep ?? niceStep(g.yMax - g.yMin, targetTicks: 10 * Double(plot.height / max(plot.width, 1)))
+        // A stored step that is non-positive or would draw hundreds of lines (and hang the tick
+        // loops below) falls back to an automatic one.
+        func usable(_ step: Double?, _ range: Double) -> Double? { step.flatMap { $0 > 0 && range / $0 <= 200 ? $0 : nil } }
+        let xStep = usable(g.xStep, g.xMax - g.xMin) ?? niceStep(g.xMax - g.xMin)
+        let yStep = usable(g.yStep, g.yMax - g.yMin) ?? niceStep(g.yMax - g.yMin, targetTicks: 10 * Double(plot.height / max(plot.width, 1)))
 
         // Grid.
         if g.showGrid {
@@ -489,19 +511,28 @@ enum ElementRenderer {
             ctx.fillPath()
         }
 
+        var labelPositions: [(String, CGPoint, String)] = []
+
         // Guide lines (asymptotes etc).
         for guide in g.guides {
             ctx.setStrokeColor(UIColor(hex: guide.colorHex).withAlphaComponent(curveProgress).cgColor)
             ctx.setLineWidth(1.3)
             if guide.dashed { ctx.setLineDash(phase: 0, lengths: [6, 5]) }
+            let label = curveProgress >= 1 ? guide.label.flatMap { $0.isEmpty ? nil : $0 } : nil
             if let x = guide.x {
                 let p = graphMap(x, 0, g, plot)
                 ctx.move(to: CGPoint(x: p.x, y: plot.minY))
                 ctx.addLine(to: CGPoint(x: p.x, y: plot.maxY))
+                if let label, (g.xMin...g.xMax).contains(x) {
+                    labelPositions.append((label, CGPoint(x: p.x, y: plot.minY + 4), guide.colorHex))
+                }
             } else if let y = guide.y {
                 let p = graphMap(0, y, g, plot)
                 ctx.move(to: CGPoint(x: plot.minX, y: p.y))
                 ctx.addLine(to: CGPoint(x: plot.maxX, y: p.y))
+                if let label, (g.yMin...g.yMax).contains(y) {
+                    labelPositions.append((label, CGPoint(x: plot.maxX - 4, y: p.y), guide.colorHex))
+                }
             }
             ctx.strokePath()
             ctx.setLineDash(phase: 0, lengths: [])
@@ -509,7 +540,6 @@ enum ElementRenderer {
 
         // Functions, drawn left to right.
         let nf = CGFloat(max(1, g.functions.count))
-        var labelPositions: [(String, CGPoint, String)] = []
         for (fi, f) in g.functions.enumerated() {
             let fp = max(0, min(1, curveProgress * nf - CGFloat(fi)))
             guard fp > 0, let expr = try? ExpressionParser.parse(f.expression) else { continue }

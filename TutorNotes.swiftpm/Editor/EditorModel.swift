@@ -79,7 +79,15 @@ final class EditorModel: CanvasHost {
             showPractice = true
             return
         }
+        showPanelIfNoKey()
         tutor.quick(action, focus: focus)
+    }
+
+    /// Without an API key the tutor can only answer in the panel (which shows the key prompt), so
+    /// open it rather than letting a canvas action silently do nothing.
+    func showPanelIfNoKey() {
+        guard !AppSettings.shared.hasAPIKey else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { showTutor = true }
     }
 
     func askAboutRegion(_ request: QuickMenuRequest) {
@@ -134,8 +142,10 @@ final class EditorModel: CanvasHost {
         case .revealHint:
             tutor.revealHint(for: element)
         case .revealSolution:
+            showPanelIfNoKey()
             tutor.revealSolution(for: element)
         case .checkAnswer:
+            showPanelIfNoKey()
             tutor.checkAnswer(for: element)
         default:
             break
@@ -149,6 +159,8 @@ final class EditorModel: CanvasHost {
     }
 
     func canvasRequestPalette(anchor: CGRect) {
+        // The palette edits the current ink colour, so come back to the pen from non-ink tools.
+        if !tools.showsColorAndWidth { tools.kind = .pen }
         palettePresented = true
     }
 
@@ -178,17 +190,23 @@ final class EditorModel: CanvasHost {
     func close(library: LibraryStore) {
         audio.stopAll()
         tutor.shutdown()
-        document.saveNow()
-        let thumb = PageRenderer.thumbnail(document)
-        library.setThumbnail(thumb, for: document.id)
+        // Saving stamps modifiedAt, so only save real changes: opening a note to read it
+        // shouldn't move it to the top of the library.
+        let edited = document.revision > 0
+        if document.isDirty { document.saveNow() }
         library.update(document.meta)
+        if edited || library.thumbnail(for: document.meta) == nil {
+            library.setThumbnail(PageRenderer.thumbnail(document), for: document.id)
+        }
+        guard edited || document.meta.searchText == nil else { return }
         let doc = document
         Task {
-            if let text = await HandwritingIndexer.index(doc) {
-                var meta = doc.meta
-                meta.searchText = text
-                library.persist(meta)
-            }
+            // Merge into the library's current copy: by the time OCR finishes the note may have
+            // been reopened and renamed, or deleted (don't resurrect it).
+            guard let text = await HandwritingIndexer.index(doc),
+                  var meta = library.notes.first(where: { $0.id == doc.id }) else { return }
+            meta.searchText = text
+            library.persist(meta)
         }
     }
 }
@@ -208,6 +226,8 @@ final class AudioController: NSObject, AVAudioPlayerDelegate {
     var activeRecordingID: String?
     var replayInk = true
     var permissionDenied = false
+    /// Whether the playback bar is up for the note's recordings (its close button hides it).
+    var showsPlayer = true
 
     @ObservationIgnored private var recorder: AVAudioRecorder?
     @ObservationIgnored private var player: AVAudioPlayer?
@@ -283,6 +303,7 @@ final class AudioController: NSObject, AVAudioPlayerDelegate {
         duration = elapsed
         recorder = nil
         isRecording = false
+        showsPlayer = true
         tick?.cancel()
         document.markDirty()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -322,6 +343,12 @@ final class AudioController: NSObject, AVAudioPlayerDelegate {
         player = nil
         isPlaying = false
         canvas?.setReplay(time: nil)
+    }
+
+    /// Stops playback and hides the bar (long-press the record button to bring it back).
+    func closePlayer() {
+        stopPlayback()
+        showsPlayer = false
     }
 
     func stopAll() {

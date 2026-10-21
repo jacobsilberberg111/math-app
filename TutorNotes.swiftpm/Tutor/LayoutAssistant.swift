@@ -32,11 +32,19 @@ struct LayoutAssistant {
         return rects.sorted { ($0.minY, $0.minX) < ($1.minY, $1.minX) }
     }
 
-    func occupied(page: Int, excluding: Set<String> = []) -> [CGRect] {
+    /// With `answerAreasFree`, only a question card's prompt counts as taken: its answer area is
+    /// where marks, hints and feedback belong (the student's ink in it is still counted).
+    func occupied(page: Int, excluding: Set<String> = [], answerAreasFree: Bool = false) -> [CGRect] {
         var rects = inkClusters(page: page)
         for e in doc.elements(onPage: page) where !excluding.contains(e.id) {
-            if case .ink = e.kind { continue } // marks may overlap freely
-            rects.append(e.frame)
+            switch e.kind {
+            case .ink:
+                continue // marks may overlap freely
+            case .question(let q) where answerAreasFree:
+                rects.append(CGRect(x: e.frame.minX, y: e.frame.minY, width: e.frame.width, height: q.promptHeight))
+            default:
+                rects.append(e.frame)
+            }
         }
         return rects
     }
@@ -62,7 +70,7 @@ struct LayoutAssistant {
     /// position when nothing fits.
     func place(_ r: CGRect, page: Int, excluding: Set<String> = []) -> (rect: CGRect, nudged: Bool) {
         let rect = clamp(r)
-        let occ = occupied(page: page, excluding: excluding)
+        let occ = occupied(page: page, excluding: excluding, answerAreasFree: true)
         if !collides(rect, with: occ) { return (rect, false) }
         var dy: CGFloat = 12
         while rect.maxY + dy < pageSize.height - 12 {

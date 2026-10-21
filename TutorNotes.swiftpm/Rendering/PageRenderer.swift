@@ -75,6 +75,7 @@ enum PageRenderer {
 
     /// A sharper crop of a region (2x), so small handwriting is legible to the tutor.
     static func regionCrop(_ doc: NoteDocument, page index: Int, region: CGRect) -> Data? {
+        guard doc.content.pages.indices.contains(index) else { return nil }
         let size = doc.pageSize
         let r = region.insetBy(dx: -16, dy: -16).intersection(CGRect(origin: .zero, size: size))
         guard !r.isNull, r.width > 8, r.height > 8 else { return nil }

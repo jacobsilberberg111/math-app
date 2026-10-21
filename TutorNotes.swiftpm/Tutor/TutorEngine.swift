@@ -65,6 +65,8 @@ final class TutorEngine {
     @ObservationIgnored private var lastStrokeDate = Date.distantPast
     @ObservationIgnored private var pendingNotes: [String] = []
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// Bumped by `newSession()` so a turn still unwinding from the old session can't touch the new one.
+    @ObservationIgnored private var sessionGeneration = 0
 
     var settings: AppSettings { .shared }
 
@@ -121,6 +123,7 @@ final class TutorEngine {
     /// Starts a fresh conversation (keeps the canvas as it is).
     func newSession() {
         stop()
+        sessionGeneration += 1
         apiMessages = []
         chat = []
         pendingNotes = []
@@ -140,7 +143,8 @@ final class TutorEngine {
             return
         }
         cancelObservation()
-        currentTask?.cancel()
+        let previous = currentTask
+        previous?.cancel()
         suggestion = nil
         let newAttachments = document.content.attachments.filter { !session.sentAttachmentIDs.contains($0.id) }
         var item = ChatItem(role: .student, text: displayText ?? trimmed)
@@ -149,10 +153,12 @@ final class TutorEngine {
         chat.append(item)
 
         var content: [JSONValue] = attachmentBlocks(newAttachments)
-        session.sentAttachmentIDs.append(contentsOf: newAttachments.map(\.id))
+        let attachmentIDs = newAttachments.map(\.id)
+        session.sentAttachmentIDs.append(contentsOf: attachmentIDs)
+        let notes = pendingNotes
         let builder = TutorContextBuilder(doc: document, canvas: canvas, memory: memory)
         let recent = recentWriting.filter { Date().timeIntervalSince($0.0) < 180 }.map(\.1)
-        content += builder.blocks(focus: focus, recentWriting: recent, extraNotes: pendingNotes)
+        content += builder.blocks(focus: focus, recentWriting: recent, extraNotes: notes)
         content.append(TutorContextBuilder.text(trimmed))
         pendingNotes.removeAll()
 
@@ -160,7 +166,11 @@ final class TutorEngine {
         chat.append(reply)
         let focusDoc = focus.map { document.docRect($0.rect, page: $0.page) }
         currentTask = Task { [weak self] in
-            await self?.runTurn(userContent: content, replyID: reply.id, focusDoc: focusDoc)
+            // A cancelled turn only stops at its next suspension point; let it finish unwinding
+            // (history, records, busy state) before this one starts, so the two never interleave.
+            await previous?.value
+            await self?.runTurn(userContent: content, replyID: reply.id, focusDoc: focusDoc,
+                                attachmentIDs: attachmentIDs, notes: notes)
         }
     }
 
@@ -174,17 +184,20 @@ final class TutorEngine {
     }
 
     func stop() {
+        // Keep the reference: the next turn waits for this one to finish unwinding.
         currentTask?.cancel()
-        currentTask = nil
         cancelObservation()
     }
 
     /// Retries after an error, continuing from the history as it stands.
     func retry() {
         guard !isBusy, let last = apiMessages.last, last["role"]?.stringValue == "user" else { return }
+        cancelObservation()
+        let previous = currentTask
         let reply = ChatItem(role: .tutor, text: "", model: settings.tutorModel, isStreaming: true)
         chat.append(reply)
         currentTask = Task { [weak self] in
+            await previous?.value
             await self?.runTurn(userContent: nil, replyID: reply.id, focusDoc: nil)
         }
     }

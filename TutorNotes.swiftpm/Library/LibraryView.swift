@@ -115,14 +115,22 @@ struct LibraryView: View {
                     .contextMenu {
                         Button { newSubjectName = subject.name; editingSubject = subject } label: { Label("Rename", systemImage: "pencil") }
                         Menu {
+                            // Menus ignore .tint and draw symbols as templates, so name each colour and
+                            // bake the colour into the icon image.
                             ForEach(Subject.palette, id: \.self) { hex in
                                 Button { library.recolorSubject(subject, hex: hex) } label: {
-                                    Label(hex == subject.colorHex ? "Current" : " ", systemImage: "circle.fill")
+                                    Label {
+                                        Text(LibraryView.colourNames[hex] ?? hex)
+                                    } icon: {
+                                        Image(uiImage: LibraryView.swatch(hex, current: hex == subject.colorHex))
+                                    }
                                 }
-                                .tint(Color(hex: hex))
                             }
                         } label: { Label("Colour", systemImage: "paintpalette") }
-                        Button(role: .destructive) { library.deleteSubject(subject); selection = .all } label: { Label("Delete Subject", systemImage: "trash") }
+                        Button(role: .destructive) {
+                            library.deleteSubject(subject)
+                            if selection == .subject(subject.id) { selection = .all }
+                        } label: { Label("Delete Subject", systemImage: "trash") }
                     }
                 }
                 Button {
@@ -212,6 +220,14 @@ struct LibraryView: View {
         let meta = library.createNote(title: "Note \(f.string(from: Date()))", subjectID: currentSubjectID, paper: paper)
         openNote = meta
     }
+
+    static let colourNames = ["#5B5BD6": "Indigo", "#E5484D": "Red", "#30A46C": "Green", "#F76B15": "Orange",
+                              "#0090FF": "Blue", "#8E4EC6": "Purple", "#D6409F": "Pink", "#12A594": "Teal"]
+
+    static func swatch(_ hex: String, current: Bool) -> UIImage {
+        let image = UIImage(systemName: current ? "checkmark.circle.fill" : "circle.fill") ?? UIImage()
+        return image.withTintColor(UIColor(hex: hex), renderingMode: .alwaysOriginal)
+    }
 }
 
 struct NoteCard: View {
@@ -279,6 +295,31 @@ struct OnboardingView: View {
     @State private var key = ""
 
     var body: some View {
+        // Scrolls so it still fits in a form-size sheet, in landscape, and with the keyboard up.
+        ScrollView {
+            content.padding(36)
+        }
+        .safeAreaInset(edge: .bottom) {
+            Button { finish() } label: {
+                Text(key.trimmed.isEmpty ? "Continue without a key" : "Get started").frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .padding(.horizontal, 36)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .background(Color(uiColor: .systemBackground))
+        }
+        .interactiveDismissDisabled()
+    }
+
+    private func finish() {
+        if !key.trimmed.isEmpty { settings.apiKey = key.trimmed }
+        settings.hasSeenOnboarding = true
+        dismiss()
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 14) {
                 TutorOrb(active: true, size: 44)
@@ -299,22 +340,12 @@ struct OnboardingView: View {
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .onSubmit { finish() }
                 Text("Get one at console.anthropic.com. It's kept in the Keychain on this iPad and only sent to api.anthropic.com. You can add it later in Settings.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Spacer()
-            Button {
-                if !key.trimmed.isEmpty { settings.apiKey = key.trimmed }
-                settings.hasSeenOnboarding = true
-                dismiss()
-            } label: {
-                Text(key.trimmed.isEmpty ? "Continue without a key" : "Get started").frame(maxWidth: .infinity).padding(.vertical, 6)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
         }
-        .padding(36)
-        .interactiveDismissDisabled()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func row(_ symbol: String, _ title: String, _ detail: String) -> some View {

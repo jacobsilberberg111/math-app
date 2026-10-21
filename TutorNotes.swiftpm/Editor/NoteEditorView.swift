@@ -17,6 +17,9 @@ struct NoteEditorContainer: View {
         }
         .task {
             if model == nil {
+                // Saves are written on the io queue; let any pending ones land (a note that was
+                // just created, imported or closed) so we don't read back stale or missing files.
+                Storage.ioQueue.sync {}
                 model = EditorModel(document: NoteDocument.load(meta: meta))
             }
         }
@@ -27,6 +30,7 @@ struct NoteEditorView: View {
     @Bindable var model: EditorModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(LibraryStore.self) private var library
     @EnvironmentObject var settings: AppSettings
     @State private var showPhotoPicker = false
@@ -46,10 +50,17 @@ struct NoteEditorView: View {
             EditorToolStrip(model: model)
             HStack(spacing: 0) {
                 canvasArea
-                if model.showTutor {
+                if model.showTutor && sizeClass != .compact {
                     Divider()
                     TutorPanel(model: model)
                         .frame(width: 392)
+                        .transition(.move(edge: .trailing))
+                }
+            }
+            .overlay {
+                // Too narrow for a side panel (Split View, Slide Over): the tutor covers the canvas.
+                if model.showTutor && sizeClass == .compact {
+                    TutorPanel(model: model)
                         .transition(.move(edge: .trailing))
                 }
             }
@@ -61,8 +72,9 @@ struct NoteEditorView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
-                model.document.saveNow()
                 model.tutor.saveNow()
+                // Only when something changed: saving stamps the note's modified date.
+                if model.document.isDirty { model.document.saveNow() }
             }
         }
         .onChange(of: photoItem) { _, item in
@@ -76,11 +88,25 @@ struct NoteEditorView: View {
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
         .fileImporter(isPresented: $showPDFImporter, allowedContentTypes: [.pdf]) { result in
-            if case .success(let url) = result, let asset = model.document.storePDF(from: url) {
-                let first = model.document.content.pages.count
+            guard case .success(let url) = result else { return }
+            if let asset = model.document.storePDF(from: url) {
                 model.document.importPDFPages(assetID: asset, replaceFirstBlankPage: true)
-                model.canvas?.scrollToPage(min(first, model.document.content.pages.count - 1))
+                // The import may have replaced a blank first page, so find where its pages landed.
+                if let first = model.document.content.pages.firstIndex(where: { $0.pdfAssetID == asset }) {
+                    model.canvas?.scrollToPage(first)
+                    return
+                }
             }
+            model.flash("Couldn't import that PDF")
+        }
+        .alert("Microphone access is off", isPresented: Binding(get: { model.audio.permissionDenied },
+                                                                set: { model.audio.permissionDenied = $0 })) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Allow Tutor Notes to use the microphone in Settings to record audio with your notes.")
         }
         .sheet(isPresented: $model.showPages) { PageNavigator(model: model) }
         .sheet(isPresented: $model.showPractice) { PracticeSheet(model: model) }
@@ -101,7 +127,7 @@ struct NoteEditorView: View {
 
                 if let toast = model.toast {
                     ToastView(text: toast)
-                        .padding(.top, model.tutor.isBusy ? 56 : 14)
+                        .padding(.top, model.tutor.isBusy || model.tutor.isObserving ? 56 : 14)
                 }
 
                 if let request = model.quickMenu {
@@ -115,7 +141,7 @@ struct NoteEditorView: View {
                     if let s = model.tutor.suggestion {
                         SuggestionPill(suggestion: s, action: { handle(s) }, dismiss: { model.tutor.dismissSuggestion() })
                     }
-                    if model.audio.isRecording || model.audio.activeRecording != nil {
+                    if model.audio.isRecording || (model.audio.showsPlayer && model.audio.activeRecording != nil) {
                         AudioBar(audio: model.audio)
                     }
                 }
@@ -141,6 +167,8 @@ struct NoteEditorView: View {
     private func export() {
         if let url = PageRenderer.exportPDF(model.document) {
             exportItem = ExportItem(url: url)
+        } else {
+            model.flash("Couldn't export this note")
         }
     }
 

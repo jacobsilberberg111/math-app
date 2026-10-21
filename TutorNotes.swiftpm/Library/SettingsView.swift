@@ -32,6 +32,10 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
             .onAppear { keyDraft = settings.apiKey }
+            // A key typed but not submitted would otherwise be lost on Done / swipe-down.
+            .onDisappear {
+                if keyDraft.trimmed != settings.apiKey { settings.apiKey = keyDraft.trimmed }
+            }
         }
     }
 

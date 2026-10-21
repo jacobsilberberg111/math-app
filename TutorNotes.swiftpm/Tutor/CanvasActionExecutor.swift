@@ -88,6 +88,11 @@ final class CanvasActionExecutor {
     func endResponse() {
         turnRecord.merge(responseRecord)
         responseRecord = TurnRecord()
+        // A tool call cut off mid-stream (stop, error) leaves its live element behind: finish
+        // it as it stands so it renders normally.
+        for id in liveElements.values { canvas?.finishLive(id) }
+        liveElements.removeAll()
+        liveFrames.removeAll()
     }
 
     /// Undoes only what the response currently streaming has done.
@@ -123,7 +128,17 @@ final class CanvasActionExecutor {
         for id in r.created { doc.remove(id, actionName: "Undo Tutor") }
         for (_, original) in r.originals { doc.restore(original) }
         for e in r.removed { doc.restore(e) }
-        if let d = r.drawingBefore { doc.replaceDrawing(d, actionName: "Undo Tutor") }
+        if !r.erasedStrokes.isEmpty {
+            var d = doc.drawing
+            // Skip strokes that are back already (e.g. the student used Undo).
+            let present = Set(d.strokes.map(strokeKey))
+            d.strokes.append(contentsOf: r.erasedStrokes.filter { !present.contains(strokeKey($0)) })
+            doc.replaceDrawing(d, actionName: "Undo Tutor")
+        }
+    }
+
+    private static func strokeKey(_ s: PKStroke) -> String {
+        "\(s.path.creationDate.timeIntervalSinceReferenceDate)|\(s.renderBounds)"
     }
 
     // MARK: Helpers
@@ -362,15 +377,20 @@ final class CanvasActionExecutor {
         if let id = liveElements[toolID], let start = liveFrames[toolID] {
             let fittedWidth = ElementRenderer.fittedTextWidth(content, author: .tutor, maxWidth: start.width, env: env)
             let h = ElementRenderer.measureText(content, author: .tutor, width: fittedWidth, env: env).height
-            let frame = CGRect(x: start.minX, y: start.minY, width: fittedWidth, height: h)
+            let page = document.element(id)?.pageIndex ?? 0
+            // The live block was placed while it was a line or two tall; make sure the finished
+            // block doesn't run into what's below it.
+            let (frame, nudged) = layout.place(CGRect(x: start.minX, y: start.minY, width: fittedWidth, height: h),
+                                               page: page, excluding: [id])
             document.update(id, registerUndo: false) {
                 $0.kind = .text(content)
                 $0.frame = frame
             }
             canvas?.finishLive(id)
             liveElements[toolID] = nil
-            let page = document.element(id)?.pageIndex ?? 0
-            return Outcome(result: "Wrote \(id) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY))).", isError: false,
+            var result = "Wrote \(id) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY)))."
+            if nudged { result += " Moved from y=\(Int(start.minY)) to avoid overlapping existing content." }
+            return Outcome(result: result, isError: false,
                            action: ChatAction(symbol: "pencil.line", summary: "Wrote on p.\(page + 1)", elementIDs: [id], page: page))
         }
         let page = try resolvePage(args.int("page"))
@@ -389,16 +409,19 @@ final class CanvasActionExecutor {
         let content = MathContent(lines: lines, fontSize: mathSize(args.string("size")), colorHex: color(args.string("color")))
         let size = ElementRenderer.measureMath(content)
         if let id = liveElements[toolID], let start = liveFrames[toolID] {
-            let frame = CGRect(origin: start.origin, size: size)
+            let page = document.element(id)?.pageIndex ?? 0
+            // Placed when only the first line had streamed; re-check now it has all its lines.
+            let (frame, nudged) = layout.place(CGRect(origin: start.origin, size: size), page: page, excluding: [id])
             document.update(id, registerUndo: false) {
                 $0.kind = .math(content)
                 $0.frame = frame
             }
             canvas?.finishLive(id)
             liveElements[toolID] = nil
-            let page = document.element(id)?.pageIndex ?? 0
-            return Outcome(result: "Wrote math \(id) (\(lines.count) line\(lines.count == 1 ? "" : "s")) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY))).",
-                           isError: false, action: ChatAction(symbol: "function", summary: "Worked math on p.\(page + 1)", elementIDs: [id], page: page))
+            var result = "Wrote math \(id) (\(lines.count) line\(lines.count == 1 ? "" : "s")) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY)))."
+            if nudged { result += " Moved to avoid overlapping existing content." }
+            return Outcome(result: result, isError: false,
+                           action: ChatAction(symbol: "function", summary: "Worked math on p.\(page + 1)", elementIDs: [id], page: page))
         }
         let page = try resolvePage(args.int("page"))
         let requested = CGRect(x: args.cg("x") ?? 60, y: args.cg("y") ?? 60, width: size.width, height: size.height)
@@ -681,7 +704,16 @@ final class CanvasActionExecutor {
             y = 50
         } else if let p = args.int("page") {
             page = try resolvePage(p)
-            y = args.cg("y") ?? (layout.nextFreeY(page: page, height: height) ?? 50)
+            if let requestedY = args.cg("y") {
+                y = requestedY
+            } else if let free = layout.nextFreeY(page: page, height: height) {
+                y = free
+            } else {
+                // No room left on that page: don't stack the card on top of what's there.
+                document.appendPage()
+                page = document.content.pages.count - 1
+                y = 50
+            }
         } else {
             // Continue after the last question if there is one, otherwise on the current page.
             let lastQuestionPage = document.content.elements.filter { if case .question = $0.kind { return true }; return false }.map(\.pageIndex).max()
@@ -869,13 +901,12 @@ final class CanvasActionExecutor {
         let r = CGRect(x: try args.requireDouble("x"), y: try args.requireDouble("y"),
                        width: try args.requireDouble("width"), height: try args.requireDouble("height"))
         let docRect = document.docRect(r, page: page)
-        let before = document.drawing
-        var d = before
-        let count = d.strokes.count
-        d.strokes.removeAll { docRect.contains($0.renderBounds.center) }
-        let removed = count - d.strokes.count
+        var d = document.drawing
+        let erased = d.strokes.filter { docRect.contains($0.renderBounds.center) }
+        let removed = erased.count
         guard removed > 0 else { return Outcome(result: "No ink found in that area.", isError: false, action: nil) }
-        if turnRecord.drawingBefore == nil && responseRecord.drawingBefore == nil { responseRecord.drawingBefore = before }
+        d.strokes.removeAll { docRect.contains($0.renderBounds.center) }
+        responseRecord.erasedStrokes.append(contentsOf: erased)
         document.replaceDrawing(d, actionName: "Erase")
         return Outcome(result: "Erased \(removed) stroke\(removed == 1 ? "" : "s") on page \(page + 1).", isError: false,
                        action: ChatAction(symbol: "eraser", summary: "Erased ink on p.\(page + 1)", page: page))

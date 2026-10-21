@@ -179,11 +179,12 @@ struct AudioBar: View {
                 .toggleStyle(.button)
                 .help("Replay ink in sync with audio")
                 Button {
-                    audio.stopPlayback()
+                    audio.closePlayer()
                 } label: {
                     Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close playback")
             }
         }
         .padding(.horizontal, 16)

@@ -50,6 +50,7 @@ struct PracticeSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
                         let t = topic.trimmed.isEmpty ? "the topic on the page I'm looking at (\(model.document.meta.title))" : topic.trimmed
+                        model.showPanelIfNoKey()
                         model.tutor.practice(PracticeRequest(topic: t, count: count, difficulty: difficulty,
                                                              style: style == "Mixed" ? "" : style, newPage: newPage))
                         dismiss()

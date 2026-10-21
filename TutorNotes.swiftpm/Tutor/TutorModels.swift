@@ -36,15 +36,17 @@ struct TurnRecord {
     var created: [String] = []
     var originals: [String: CanvasElement] = [:]
     var removed: [CanvasElement] = []
-    var drawingBefore: PKDrawing?
+    /// Student strokes the tutor erased. Reverting puts just these back, so ink the student
+    /// wrote afterwards is kept (restoring a whole earlier drawing would wipe it).
+    var erasedStrokes: [PKStroke] = []
 
-    var isEmpty: Bool { created.isEmpty && originals.isEmpty && removed.isEmpty && drawingBefore == nil }
+    var isEmpty: Bool { created.isEmpty && originals.isEmpty && removed.isEmpty && erasedStrokes.isEmpty }
 
     mutating func merge(_ other: TurnRecord) {
         created.append(contentsOf: other.created)
         for (k, v) in other.originals where originals[k] == nil { originals[k] = v }
         removed.append(contentsOf: other.removed)
-        if drawingBefore == nil { drawingBefore = other.drawingBefore }
+        erasedStrokes.append(contentsOf: other.erasedStrokes)
     }
 }
 

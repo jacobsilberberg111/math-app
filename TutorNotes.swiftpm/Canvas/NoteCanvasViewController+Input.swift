@@ -132,6 +132,15 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         return false
     }
 
+    /// Touches on the text box being edited (caret taps, selection long-presses) and on the selection's
+    /// action buttons belong to those views; otherwise the canvas tap would end editing or deselect.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer !== strokeObserver, let v = touch.view else { return true }
+        if let tv = editingTextView, v.isDescendant(of: tv) { return false }
+        if v.isDescendant(of: selectionView.actionBar) { return false }
+        return true
+    }
+
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer === longPress {
             let p = gestureRecognizer.location(in: chrome)

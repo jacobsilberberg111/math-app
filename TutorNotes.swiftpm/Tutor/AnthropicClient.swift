@@ -19,7 +19,11 @@ struct AnthropicError: LocalizedError, Sendable {
     }
 
     var isRetryable: Bool {
-        if let s = status, [408, 409, 429, 500, 502, 503, 504, 529].contains(s) { return true }
+        if let s = status {
+            if [408, 409, 429].contains(s) || s >= 500 { return true }
+            // Other 4xx (including non-JSON bodies, which are typed "api_error") won't succeed as-is.
+            if s >= 400 { return false }
+        }
         return type == "overloaded_error" || type == "rate_limit_error" || type == "api_error" || type == "network"
     }
 }
