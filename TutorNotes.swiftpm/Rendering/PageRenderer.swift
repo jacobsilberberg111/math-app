@@ -217,12 +217,12 @@ enum PageRenderer {
 
     // MARK: PDF export
 
+    /// Writes the note as a PDF named after its title, in a fresh folder of its own (see `ExportFiles`).
     static func exportPDF(_ doc: NoteDocument) -> URL? {
-        let size = doc.pageSize
-        let safeTitle = doc.meta.title.replacingOccurrences(of: "/", with: "-").trimmed
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent((safeTitle.isEmpty ? "Note" : safeTitle) + ".pdf")
+        guard !doc.content.pages.isEmpty, let folder = ExportFiles.makeFolder() else { return nil }
+        let url = folder.appendingPathComponent(ExportFiles.safeName(doc.meta.title) + ".pdf")
         if doc.isFreeform { return exportBoardPDF(doc, to: url) }
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: size))
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: doc.pageSize), format: pdfFormat(for: doc))
         let env = environment(for: doc)
         do {
             try renderer.writePDF(to: url) { rc in
@@ -239,21 +239,14 @@ enum PageRenderer {
 
     /// A board exports as one PDF page covering everything on it.
     private static func exportBoardPDF(_ doc: NoteDocument, to url: URL) -> URL? {
-        let board = CGRect(origin: .zero, size: doc.pageSize)
-        var region = (doc.boardContentBounds ?? CGRect(x: 0, y: 0, width: 816, height: 1056)).insetBy(dx: -48, dy: -48)
-        region.origin.x = max(0, region.minX)
-        region.origin.y = max(0, region.minY)
-        region.size.width = max(region.width, 816)
-        region.size.height = max(region.height, 1056)
-        region = region.intersection(board)
-        guard !region.isNull else { return nil }
+        guard let region = boardExportRegion(doc) else { return nil }
         // PDF pages top out around 14,400 points a side; very large boards are scaled to fit.
         let pageScale = min(1, 14_400 / max(region.width, region.height))
         let pageSize = CGSize(width: region.width * pageScale, height: region.height * pageScale)
         // Keep the ink bitmap to roughly 40 megapixels.
         let inkScale = min(3, max(0.1, sqrt(40_000_000 / (region.width * region.height))))
         let env = environment(for: doc)
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize))
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize), format: pdfFormat(for: doc))
         do {
             try renderer.writePDF(to: url) { rc in
                 rc.beginPage()
