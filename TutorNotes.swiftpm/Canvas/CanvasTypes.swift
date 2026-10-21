@@ -32,7 +32,7 @@ enum CanvasToolKind: String, CaseIterable, Identifiable, Codable {
 
     var usesPencilKit: Bool {
         switch self {
-        case .pen, .highlighter, .eraser, .lasso: return true
+        case .pen, .highlighter, .eraser: return true
         default: return false
         }
     }
@@ -108,8 +108,6 @@ struct CanvasToolConfig: Equatable {
             return PKInkingTool(.marker, color: UIColor(hex: highlighterColorHex), width: highlighterWidth)
         case .eraser:
             return eraserMode == .stroke ? PKEraserTool(.vector) : PKEraserTool(.bitmap, width: eraserWidth)
-        case .lasso:
-            return PKLassoTool()
         default:
             return PKInkingTool(penStyle.inkType, color: UIColor(hex: penColorHex), width: penWidth)
         }

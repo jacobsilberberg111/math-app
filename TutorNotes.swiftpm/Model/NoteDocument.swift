@@ -475,6 +475,17 @@ final class NoteDocument {
         }
     }
 
+    /// Stores raw asset bytes (images pasted from another note) and returns the asset id.
+    func storeAsset(_ data: Data, ext: String) -> String? {
+        let name = "img-\(UUID().uuidString.prefix(8)).\(ext)"
+        do {
+            try data.write(to: assetURL(name), options: .atomic)
+            return name
+        } catch {
+            return nil
+        }
+    }
+
     func image(_ assetID: String) -> UIImage? {
         if let img = imageCache[assetID] { return img }
         guard let img = UIImage(contentsOfFile: assetURL(assetID).path) else { return nil }
