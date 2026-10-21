@@ -105,7 +105,7 @@ jobs:
           REC=$!
           sleep 3
           xcrun simctl launch --console-pty "$DEVICE" com.example.tutornotes -demo-script > video/app-log.txt 2>&1 &
-          for i in $(seq 1 180); do
+          for i in $(seq 1 300); do
             if grep -q "DEMO_COMPLETE" video/app-log.txt 2>/dev/null; then echo "demo finished after ${i}s"; break; fi
             sleep 1
           done

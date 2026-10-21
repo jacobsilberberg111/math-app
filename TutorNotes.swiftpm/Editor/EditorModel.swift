@@ -41,6 +41,8 @@ final class EditorModel: CanvasHost {
     var showPaperQuestions = false
     /// The note was opened with a job for the tutor, and it has been started.
     @ObservationIgnored var handledStartRequest = false
+    /// Whether opening a past paper starts its clock (untimed) and has the tutor map it.
+    @ObservationIgnored var autoStartPaper = true
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     /// Start of the stretch of study not yet added to the study log.
     @ObservationIgnored private var studySince = Date()
@@ -220,7 +222,7 @@ final class EditorModel: CanvasHost {
     /// the tutor map the questions the first time (after the files have had a moment to upload).
     func paperAppeared() {
         tutor.uploadPendingAttachments()
-        guard var paper = document.content.paper else { return }
+        guard autoStartPaper, var paper = document.content.paper else { return }
         if paper.timeLimitMinutes == nil && paper.startedAt == nil {
             paper.startedAt = Date()
             document.content.paper = paper

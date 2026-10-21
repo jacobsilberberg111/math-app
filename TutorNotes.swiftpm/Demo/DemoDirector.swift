@@ -19,6 +19,7 @@ final class DemoDirector {
     private var openNote: ((NoteMeta) -> Void)?
     private var closeNote: (() -> Void)?
     private var newBoard: ((String) -> Void)?
+    private var showFlashcards: ((Bool) -> Void)?
     private weak var library: LibraryStore?
     private var started = false
     private var editor: EditorModel?
@@ -27,13 +28,14 @@ final class DemoDirector {
     // MARK: Hooks from the UI
 
     func libraryAppeared(library: LibraryStore, open: @escaping (NoteMeta) -> Void, close: @escaping () -> Void,
-                         newBoard: @escaping (String) -> Void) {
+                         newBoard: @escaping (String) -> Void, flashcards: @escaping (Bool) -> Void) {
         let settings = AppSettings.shared
         if DemoDirector.skipOnboarding { settings.hasSeenOnboarding = true }
         self.library = library
         self.openNote = open
         self.closeNote = close
         self.newBoard = newBoard
+        self.showFlashcards = flashcards
         if DemoDirector.isDemo {
             guard !started else { return }
             started = true
@@ -50,7 +52,11 @@ final class DemoDirector {
 
     func editorAppeared(_ model: EditorModel) {
         editor = model
-        if DemoDirector.isDemo { model.tutor.watching = false }
+        if DemoDirector.isDemo {
+            model.tutor.watching = false
+            // The scripted tutor maps the paper itself (there's no network in the demo).
+            model.autoStartPaper = false
+        }
         if DemoDirector.showTutorPanel { model.showTutor = true }
         if let c = editorContinuation {
             editorContinuation = nil
@@ -355,12 +361,128 @@ final class DemoDirector {
         await tool("mark", #"{"page": 1, "verdict": "correct", "x": 540, "y": 236}"#, model: board, replyID: boardReply)
         await tool("write", #"{"page": 1, "x": 120, "y": 335, "width": 470, "text": "So $x = -2$ or $x = -3$. Both are negative because $+5x$ and $+6$ are positive."}"#, model: board, replyID: boardReply)
         await tool("graph", #"{"page": 1, "x": 650, "y": 130, "width": 330, "height": 300, "x_min": -5, "x_max": 1, "y_min": -1, "y_max": 6, "functions": [{"expression": "x^2 + 5x + 6", "label": "$y = x^2 + 5x + 6$"}], "points": [{"x": -2, "y": 0, "label": "(−2, 0)", "color": "red"}, {"x": -3, "y": 0, "label": "(−3, 0)", "color": "red"}]}"#, model: board, replyID: boardReply)
+        await tool("make_flashcards", #"{"cards": [{"front": "Roots of $x^2 + 5x + 6 = 0$?", "back": "$(x + 2)(x + 3) = 0$, so $x = -2$ or $x = -3$", "topic": "Factorising"}, {"front": "To factorise $x^2 + bx + c$, find two numbers that…", "back": "multiply to $c$ and add to $b$", "topic": "Factorising"}, {"front": "Where are the roots on the graph of $y = f(x)$?", "back": "Where the curve crosses the $x$-axis ($y = 0$)", "topic": "Graphs"}]}"#, model: board, replyID: boardReply)
         endTutorTurn(board, replyID: boardReply)
         await wait(3.2)
         boardCanvas.zoomToShowAll()
         await wait(3.0)
+
+        // 9. Home again: flashcards are due; review a couple.
+        if let library { board.close(library: library) }
+        closeNote?()
+        await wait(3.2)
+        showFlashcards?(true)
+        await wait(9.5)
+        showFlashcards?(false)
+        await wait(1.5)
+
+        // 10. A past paper: the tutor maps it, the clock runs, answers get marked to the scheme,
+        // and a results page is written.
+        await runPastPaper()
+        log("past paper done")
         // Marker the recording script waits for.
         print("DEMO_COMPLETE")
         FileManager.default.createFile(atPath: NSTemporaryDirectory() + "demo-complete", contents: Data())
+    }
+
+    // MARK: Past paper demo
+
+    private func runPastPaper() async {
+        guard let library, let url = DemoDirector.makePracticePaperPDF(),
+              let meta = library.createPastPaper(paper: url, markScheme: nil, title: "Practice Paper 1", subjectID: library.subjects.first?.id,
+                                                 timeLimitMinutes: 30) else { log("couldn't make the paper"); return }
+        editor = nil
+        openNote?(meta)
+        let paper = await waitForEditor()
+        guard let canvas = await waitForCanvas(paper) else { return }
+        await wait(1.6)
+        // The tutor reads the paper and maps its questions.
+        let mapReply = beginTutorTurn(paper, studentText: "Read through this paper", thinking: "Three questions: factorising, expanding brackets, sketching a quadratic. 8 marks.")
+        await wait(1.4)
+        await tool("outline_paper", #"{"questions": [{"label": "1", "page": 1, "y": 150, "marks": 3, "topic": "Factorising"}, {"label": "2", "page": 1, "y": 470, "marks": 2, "topic": "Expanding brackets"}, {"label": "3", "page": 1, "y": 760, "marks": 3, "topic": "Graph sketching"}]}"#, model: paper, replyID: mapReply)
+        await streamChat("3 questions, 8 marks. Start the clock whenever you're ready.", into: mapReply, model: paper)
+        endTutorTurn(paper, replyID: mapReply)
+        await wait(1.6)
+        paper.startPaper()
+        await wait(1.8)
+        // Answers.
+        paper.tools.kind = .pen
+        paper.tools.penColorIndex = 0
+        let ink = UIColor(hex: "#1F2328")
+        await handwrite("(x − 4)(x − 5) = 0", at: CGPoint(x: 110, y: 230), size: 28, color: ink, width: 2.5, canvas: canvas)
+        await handwrite("x = 4 or x = 5", at: CGPoint(x: 110, y: 290), size: 28, color: ink, width: 2.5, canvas: canvas)
+        await wait(0.8)
+        // Mark the question on screen.
+        let q1Reply = beginTutorTurn(paper, studentText: "Mark question 1", thinking: "Correct factors (M1), both roots (A1 A1).")
+        await wait(1.2)
+        await tool("annotate", #"{"page": 1, "mark": "tick", "x": 425, "y": 228, "width": 30, "height": 30}"#, model: paper, replyID: q1Reply)
+        await tool("score_paper", #"{"label": "1", "awarded": 3, "feedback": "Correct factors and both roots."}"#, model: paper, replyID: q1Reply)
+        await streamChat("Full marks on question 1.", into: q1Reply, model: paper)
+        endTutorTurn(paper, replyID: q1Reply)
+        await wait(1.2)
+        canvas.scrollToReveal(paper.document.docRect(CGRect(x: 0, y: 470, width: 816, height: 300), page: 0))
+        await wait(1.0)
+        await handwrite("2x² − 5x + 12", at: CGPoint(x: 110, y: 545), size: 28, color: ink, width: 2.5, canvas: canvas)
+        await wait(1.0)
+        // Finish: everything gets marked and written up.
+        if var p = paper.document.content.paper { p.finishedAt = Date(); paper.document.content.paper = p }
+        let endReply = beginTutorTurn(paper, studentText: "I've finished: mark my paper", thinking: "Q2: 2x² − 8x + 3x − 12 = 2x² − 5x − 12; sign slip on the constant. Q3 blank.")
+        await wait(1.2)
+        await tool("annotate", #"{"page": 1, "mark": "circle", "x": 250, "y": 540, "width": 76, "height": 38, "label": "−12", "color": "red"}"#, model: paper, replyID: endReply)
+        await tool("score_paper", #"{"label": "2", "awarded": 1, "feedback": "Expansion right, but 3 × −4 = −12."}"#, model: paper, replyID: endReply)
+        await tool("score_paper", #"{"label": "3", "awarded": 0, "feedback": "Not attempted."}"#, model: paper, replyID: endReply)
+        await tool("paper_summary", #"{"summary": "A strong start: your factorising was spot on. Question 2 lost a mark to a sign slip, and question 3 was left blank.", "strengths": ["Factorising quadratics"], "to_review": ["Signs when expanding brackets", "Sketching parabolas from their roots"], "next_steps": "Practise 5 expansions with negative terms, then sketch y = x² − 4 using its roots and y-intercept."}"#, model: paper, replyID: endReply)
+        await streamChat("4 out of 8. Your results are on the last page.", into: endReply, model: paper)
+        endTutorTurn(paper, replyID: endReply)
+        await wait(4.5)
+        if let library { paper.close(library: library) }
+        closeNote?()
+        await wait(4.0)
+    }
+
+    /// A one-page practice paper with three questions and answer lines, drawn as a PDF.
+    static func makePracticePaperPDF() -> URL? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Practice Paper 1.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 816, height: 1056))
+        let dark = UIColor(hex: "#1F2328")
+        func draw(_ text: String, _ rect: CGRect, size: CGFloat, weight: UIFont.Weight = .regular, align: NSTextAlignment = .left) {
+            let p = NSMutableParagraphStyle()
+            p.alignment = align
+            NSAttributedString(string: text, attributes: [.font: UIFont.systemFont(ofSize: size, weight: weight), .foregroundColor: dark,
+                                                          .paragraphStyle: p]).draw(in: rect)
+        }
+        do {
+            try renderer.writePDF(to: url) { rc in
+                rc.beginPage()
+                let ctx = rc.cgContext
+                draw("Mathematics · Practice Paper 1", CGRect(x: 64, y: 48, width: 600, height: 30), size: 22, weight: .bold)
+                draw("Answer all questions. Show your working. Time allowed: 30 minutes.", CGRect(x: 64, y: 82, width: 690, height: 22), size: 14)
+                ctx.setStrokeColor(dark.cgColor)
+                ctx.setLineWidth(1)
+                ctx.move(to: CGPoint(x: 64, y: 116)); ctx.addLine(to: CGPoint(x: 752, y: 116)); ctx.strokePath()
+                let questions: [(String, String, Int, CGFloat)] = [
+                    ("1", "Solve x² − 9x + 20 = 0.", 3, 150),
+                    ("2", "Expand and simplify (2x + 3)(x − 4).", 2, 470),
+                    ("3", "Sketch the graph of y = x² − 4, labelling where it crosses the axes.", 3, 760),
+                ]
+                for (label, text, marks, y) in questions {
+                    draw(label, CGRect(x: 64, y: y, width: 30, height: 26), size: 17, weight: .bold)
+                    draw(text, CGRect(x: 96, y: y, width: 560, height: 48), size: 17)
+                    draw("[\(marks) mark\(marks == 1 ? "" : "s")]", CGRect(x: 640, y: y, width: 112, height: 24), size: 14, weight: .medium, align: .right)
+                    ctx.setStrokeColor(UIColor(white: 0.75, alpha: 1).cgColor)
+                    ctx.setLineDash(phase: 0, lengths: [2, 4])
+                    var ly = y + 86
+                    while ly < y + 270 {
+                        ctx.move(to: CGPoint(x: 96, y: ly)); ctx.addLine(to: CGPoint(x: 752, y: ly))
+                        ly += 40
+                    }
+                    ctx.strokePath()
+                    ctx.setLineDash(phase: 0, lengths: [])
+                }
+            }
+            return url
+        } catch {
+            return nil
+        }
     }
 }

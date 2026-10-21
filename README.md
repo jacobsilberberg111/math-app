@@ -38,6 +38,43 @@ The `server/` folder is a small relay that keeps your Claude API key on the serv
 
 The server streams responses straight through, relays file uploads, cancels Claude requests when you press Stop, and rejects anything without the token. Run its tests with `cd server && npm test`; they use a mock of the Claude API, so no key is needed.
 
+## Home
+
+The app opens on **Home**:
+- **Quick actions:** start a notebook, a freeform board, a question for the tutor, a past paper, a scan, or a PDF import.
+- **Jump back in:** the note you were last in.
+- **Recent notes**, and **questions waiting for an answer**.
+- **Flashcards due** today.
+- **Your topics:** weak and strong topics, with a one-tap "practise my weak spots".
+- **Study streak** and time studied this week.
+
+Press and hold the back button in a note to jump straight to another recent note.
+
+## Freeform boards
+
+A board is one big sheet instead of pages. It opens at actual size and grows to the right and downward as you write. The top-left corner is fixed, so boards don't extend up or left.
+- Switch its **lines** (blank, ruled, narrow, grid, small grid, dots, graph) and paper colour from the top bar.
+- Zoom out to see everything with **Show Whole Board**.
+- Circle working with **Ask**, or use the **floating tutor bar**: type, or tap the mic and talk. The tutor answers in a card above the bar and works on the board where you're looking.
+
+## Past papers
+
+Tap **Past Paper** on Home and add the paper and its mark scheme, as PDFs or scanned with the camera. Then pick a time limit, or leave it untimed.
+- **Setup:** your tutor reads both files and maps every question: its label, page, marks and topic. The mark scheme is attached but hidden from you unless you ask for a solution.
+- **While you work:** the bar under the toolbar shows the clock, the question on screen and your running score.
+  - **Mark** checks that question against the scheme. You get ticks where marks are earned, notes where they're lost, and the score in the margin.
+  - The question list lets you jump between questions.
+- **Exam conditions:** a timed paper keeps the tutor quiet until you finish or ask.
+- **Finish:** everything left unmarked gets marked, and a **results page** is added: score, time, per-question table, what went well, what to review, and next steps.
+
+Any note with imported PDF pages can be turned into a past paper from the **+** menu. Sending the paper and mark scheme to Claude adds about 1,500–3,000 tokens per page to the conversation. They're uploaded once with the Files API and cached after that. Very long papers (more than 100 pages) exceed the API's PDF limit.
+
+## Study tools
+
+- **Scan:** the system document camera turns worksheets and textbook pages into pages you can write on. Use it from Home, the **+** menu, or the tutor's attach menu (as reference material).
+- **Flashcards:** ask the tutor, or use **Ask → Flashcards** on some working, and it adds cards to a spaced-repetition deck. Review cards from Home: tap to flip, then rate Again / Hard / Good / Easy. Each button shows when you'll see the card next.
+- **Progress:** every marked question card and past-paper question is recorded by topic. Home shows your weakest and strongest topics (recent attempts count more), and the tutor is told what you've found hard lately.
+
 ## The notes side
 
 - **PencilKit ink** with Apple's low-latency rendering and palm rejection. Pens: ballpoint, fountain, pencil, monoline, crayon, watercolor, plus highlighter, stroke/pixel eraser, lasso, ruler.
@@ -69,6 +106,8 @@ Default model is **Claude Sonnet 5.5**. Switch to Opus 5.5, Haiku 5.5 or Fable 5
 | `move` / `edit` / `delete` / `erase_ink` / `add_page` / `clear_marks` | The same edits a person can make to the page. |
 | `focus` | Scrolls you to something and pulses it, with a speech bubble. |
 | `remember` | Saves a durable note about you (misconceptions, goals). You can review it in Settings. |
+| `make_flashcards` | Adds cards to your spaced-repetition deck. |
+| `outline_paper` / `score_paper` / `paper_summary` | Past papers: maps the questions, records each question's marks (with the score in the margin), and writes the results page. |
 
 **What makes it feel present:**
 - A glowing **tutor cursor** glides across the page and follows its pen as it writes. A status pill shows what it's doing ("Marking up your work…").
@@ -115,6 +154,8 @@ The demo video is recorded by launching the app with `-demo-script`. Student han
 ## Known gaps
 
 - Not tested on a physical iPad yet (see the status note above).
+- Freeform boards grow right and down only, up to 16,384 pt a side.
+- "Undo the tutor" removes the tutor's marks from a past paper, but not the scores it recorded. To fix a score, ask the tutor to re-mark the question.
 - Lasso selects ink only. Typed and tutor elements are selected with the Select tool or a long-press.
 - The page map sent to the tutor gets long for pages with many strokes. Very dense pages may need tuning.
 - iCloud sync and collaboration aren't implemented. Notes are stored locally in the app's Documents folder.

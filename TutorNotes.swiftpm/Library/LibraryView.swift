@@ -140,7 +140,7 @@ struct LibraryView: View {
         }
         .onAppear {
             DemoDirector.shared.libraryAppeared(library: library, open: { open($0) }, close: { openNote = nil },
-                                                newBoard: { createBoard(title: $0) })
+                                                newBoard: { createBoard(title: $0) }, flashcards: { showFlashcards = $0 })
             if !settings.hasSeenOnboarding { showOnboarding = true }
         }
     }

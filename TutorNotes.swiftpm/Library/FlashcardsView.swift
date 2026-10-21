@@ -43,6 +43,16 @@ struct FlashcardsView: View {
             queue = store.dueCards()
             sessionStart = Date()
         }
+        .task {
+            // The recorded walkthrough flips and grades a couple of cards by itself.
+            guard DemoDirector.isDemo else { return }
+            for g in [RecallGrade.good, .easy] {
+                try? await Task.sleep(nanoseconds: 1_600_000_000)
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { flipped = true }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if let card = queue.first { grade(card, g) }
+            }
+        }
         .onDisappear { store.logStudy(from: sessionStart, to: Date()) }
     }
 
