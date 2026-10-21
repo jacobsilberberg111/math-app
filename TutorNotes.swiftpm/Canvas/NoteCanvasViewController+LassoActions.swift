@@ -56,7 +56,7 @@ extension NoteCanvasViewController {
             var strokes = document.drawing.strokes
             for i in indices {
                 let s = strokes[i]
-                strokes[i] = PKStroke(ink: PKInk(s.ink.inkType, color: color), path: s.path, transform: s.transform, mask: s.mask)
+                strokes[i].ink = PKInk(s.ink.inkType, color: color)
             }
             replaceLassoStrokes(strokes, actionName: "Colour")
         }
@@ -94,6 +94,14 @@ extension NoteCanvasViewController {
         picker.delegate = self
         lasso.pickerStartHex = start
         lasso.pickedColour = nil
+        // A popover on iPad, pointing at the selection.
+        picker.modalPresentationStyle = .popover
+        if let popover = picker.popoverPresentationController {
+            popover.sourceView = view
+            let onScreen = viewRect(fromDoc: lasso.bounds).intersection(view.bounds)
+            popover.sourceRect = onScreen.isNull ? CGRect(x: view.bounds.midX, y: 80, width: 1, height: 1) : onScreen
+            popover.permittedArrowDirections = [.up, .down, .left, .right]
+        }
         present(picker, animated: true)
     }
 
@@ -146,8 +154,10 @@ extension NoteCanvasViewController {
                           size: CGSize(width: p.size.width * factor, height: p.size.height * factor),
                           opacity: p.opacity, force: p.force, azimuth: p.azimuth, altitude: p.altitude)
         }
-        let path = PKStrokePath(controlPoints: points, creationDate: stroke.path.creationDate)
-        return PKStroke(ink: stroke.ink, path: path, transform: stroke.transform, mask: stroke.mask)
+        // Changed in place, so pencil and crayon keep their grain (a new stroke gets a new random seed).
+        var scaled = stroke
+        scaled.path = PKStrokePath(controlPoints: points, creationDate: stroke.path.creationDate)
+        return scaled
     }
 
     // MARK: Copy, duplicate, delete
