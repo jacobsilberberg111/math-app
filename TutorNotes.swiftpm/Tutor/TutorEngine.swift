@@ -416,87 +416,103 @@ final class TutorEngine {
         executor.beginResponse()
 
         do {
-        for try await event in stream {
-            try Task.checkCancellation()
-            received = true
-            switch event {
-            case .messageStart:
-                break
-            case .blockStart(let i, let block):
-                let type = block["type"]?.stringValue ?? "unknown"
-                var b = Block(type: type, start: block)
-                if type == "tool_use" {
-                    b.toolID = block["id"]?.stringValue ?? ""
-                    b.toolName = block["name"]?.stringValue ?? ""
-                    toolCalls += 1
-                    statusText = TutorEngine.status(forTool: b.toolName)
+            for try await event in stream {
+                try Task.checkCancellation()
+                received = true
+                switch event {
+                case .messageStart:
+                    break
+                case .blockStart(let i, let block):
+                    let type = block["type"]?.stringValue ?? "unknown"
+                    var b = Block(type: type, start: block)
+                    if type == "tool_use" {
+                        b.toolID = block["id"]?.stringValue ?? ""
+                        b.toolName = block["name"]?.stringValue ?? ""
+                        toolCalls += 1
+                        statusText = TutorEngine.status(forTool: b.toolName)
+                    }
+                    if type == "text", let t = block["text"]?.stringValue { b.text = t }
+                    if type == "thinking" {
+                        // Echoed verbatim later: start from whatever the block opened with.
+                        b.text = block["thinking"]?.stringValue ?? ""
+                        b.signature = block["signature"]?.stringValue ?? ""
+                    }
+                    if type == "fallback" {
+                        // A fallback model took over mid-response: undo canvas edits made by the declined
+                        // attempt and drop its tool results (its tool_use blocks are not echoed back).
+                        executor.revertResponse()
+                        toolResults.removeAll()
+                        actions.removeAll()
+                        if let itemID { updateItem(itemID) { $0.actions = Array($0.actions.prefix(baseActionCount)) } }
+                    }
+                    blocks[i] = b
+                    order.append(i)
+                case .textDelta(let i, let t):
+                    blocks[i]?.text += t
+                    if let itemID, !observation {
+                        updateItem(itemID) { $0.text += t }
+                    }
+                    if !observation { statusText = nil }
+                case .thinkingDelta(let i, let t):
+                    blocks[i]?.text += t
+                    if let itemID, !observation {
+                        updateItem(itemID) { $0.thinking += t }
+                    }
+                    if statusText == nil || statusText == "Looking at your page…" { statusText = "Thinking…" }
+                case .signatureDelta(let i, let s):
+                    blocks[i]?.signature += s
+                case .inputJSONDelta(let i, let p):
+                    guard var b = blocks[i] else { break }
+                    b.json += p
+                    blocks[i] = b
+                    if TutorTools.liveTools.contains(b.toolName), let partial = JSONValue.parsePartial(b.json) {
+                        executor.preview(toolID: b.toolID, name: b.toolName, partial: partial, raw: b.json)
+                    }
+                case .blockStop(let i):
+                    guard var b = blocks[i], b.type == "tool_use" else { break }
+                    let outcome: CanvasActionExecutor.Outcome
+                    do {
+                        let input = b.json.trimmed.isEmpty ? JSONValue.object([:]) : try JSONValue.parse(b.json)
+                        guard input.objectValue != nil else { throw ToolInputError(message: "Tool input must be a JSON object.") }
+                        b.parsedInput = input
+                        outcome = executor.execute(toolID: b.toolID, name: b.toolName, input: input)
+                    } catch {
+                        executor.discardLive(toolID: b.toolID)
+                        let wrapper: JSONValue = ["INVALID_JSON": .string(String(b.json.prefix(2000)))]
+                        outcome = CanvasActionExecutor.Outcome(result: wrapper.serialized(), isError: true, action: nil)
+                    }
+                    blocks[i] = b
+                    var result: JSONValue = ["type": "tool_result", "tool_use_id": .string(b.toolID), "content": .string(outcome.result)]
+                    if outcome.isError, case .object(var o) = result {
+                        o["is_error"] = true
+                        result = .object(o)
+                    }
+                    toolResults.append(result)
+                    if let a = outcome.action {
+                        actions.append(a)
+                        if let itemID { updateItem(itemID) { $0.actions.append(a) } }
+                    }
+                case .messageDelta(let stop, _):
+                    if let stop { stopReason = stop }
+                case .messageStop:
+                    sawMessageStop = true
                 }
-                if type == "text", let t = block["text"]?.stringValue { b.text = t }
-                if type == "thinking" {
-                    // Echoed verbatim later: start from whatever the block opened with.
-                    b.text = block["thinking"]?.stringValue ?? ""
-                    b.signature = block["signature"]?.stringValue ?? ""
-                }
-                if type == "fallback" {
-                    // A fallback model took over mid-response: undo canvas edits made by the declined
-                    // attempt and drop its tool results (its tool_use blocks are not echoed back).
-                    executor.revertResponse()
-                    toolResults.removeAll()
-                    actions.removeAll()
-                    if let itemID { updateItem(itemID) { $0.actions = Array($0.actions.prefix(baseActionCount)) } }
-                }
-                blocks[i] = b
-                order.append(i)
-            case .textDelta(let i, let t):
-                blocks[i]?.text += t
-                if let itemID, !observation {
-                    updateItem(itemID) { $0.text += t }
-                }
-                if !observation { statusText = nil }
-            case .thinkingDelta(let i, let t):
-                blocks[i]?.text += t
-                if let itemID, !observation {
-                    updateItem(itemID) { $0.thinking += t }
-                }
-                if statusText == nil || statusText == "Looking at your page…" { statusText = "Thinking…" }
-            case .signatureDelta(let i, let s):
-                blocks[i]?.signature += s
-            case .inputJSONDelta(let i, let p):
-                guard var b = blocks[i] else { break }
-                b.json += p
-                blocks[i] = b
-                if TutorTools.liveTools.contains(b.toolName), let partial = JSONValue.parsePartial(b.json) {
-                    executor.preview(toolID: b.toolID, name: b.toolName, partial: partial, raw: b.json)
-                }
-            case .blockStop(let i):
-                guard var b = blocks[i], b.type == "tool_use" else { break }
-                let outcome: CanvasActionExecutor.Outcome
-                do {
-                    let input = b.json.trimmed.isEmpty ? JSONValue.object([:]) : try JSONValue.parse(b.json)
-                    guard input.objectValue != nil else { throw ToolInputError(message: "Tool input must be a JSON object.") }
-                    b.parsedInput = input
-                    outcome = executor.execute(toolID: b.toolID, name: b.toolName, input: input)
-                } catch {
-                    executor.discardLive(toolID: b.toolID)
-                    let wrapper: JSONValue = ["INVALID_JSON": .string(String(b.json.prefix(2000)))]
-                    outcome = CanvasActionExecutor.Outcome(result: wrapper.serialized(), isError: true, action: nil)
-                }
-                blocks[i] = b
-                var result: JSONValue = ["type": "tool_result", "tool_use_id": .string(b.toolID), "content": .string(outcome.result)]
-                if outcome.isError, case .object(var o) = result {
-                    o["is_error"] = true
-                    result = .object(o)
-                }
-                toolResults.append(result)
-                if let a = outcome.action {
-                    actions.append(a)
-                    if let itemID { updateItem(itemID) { $0.actions.append(a) } }
-                }
-            case .messageDelta(let stop, _):
-                if let stop { stopReason = stop }
-            case .messageStop:
-                break
             }
+            // A cancelled consumer sees the stream end quietly instead of throwing, and a dropped
+            // connection can end it early: neither may be treated as a complete response.
+            try Task.checkCancellation()
+            guard sawMessageStop else {
+                throw AnthropicError(status: nil, type: "network", message: "The response was cut off.")
+            }
+        } catch {
+            if !(error is CancellationError) {
+                // This partial response never reaches the history (its tool calls get no results),
+                // so undo what it did on the canvas; a retry redoes it.
+                executor.revertResponse()
+                if let itemID { updateItem(itemID) { $0.actions = Array($0.actions.prefix(baseActionCount)) } }
+            }
+            executor.endResponse()
+            throw error
         }
         executor.endResponse()
 
@@ -506,12 +522,15 @@ final class TutorEngine {
         var text = ""
         for (pos, i) in order.enumerated() {
             guard let b = blocks[i] else { continue }
-            if let lf = lastFallback, pos < lf, ["thinking", "redacted_thinking", "tool_use", "server_tool_use"].contains(b.type) {
+            // Before the last fallback boundary only the declined attempt's text carries over; its
+            // thinking, tool calls and any other model-internal blocks are omitted.
+            if let lf = lastFallback, pos < lf, b.type != "text" {
                 continue
             }
             switch b.type {
             case "text":
-                if !b.text.isEmpty {
+                // Empty and whitespace-only text blocks are rejected by the API.
+                if !b.text.trimmed.isEmpty {
                     content.append(["type": "text", "text": .string(b.text)])
                     text += b.text
                 }
@@ -529,8 +548,9 @@ final class TutorEngine {
             }
         }
         // Every tool_use we echo must have a result, and vice versa.
-        let echoedIDs = Set(content.compactMap { $0["type"]?.stringValue == "tool_use" ? $0["id"]?.stringValue : nil })
-        toolResults = toolResults.filter { echoedIDs.contains($0["tool_use_id"]?.stringValue ?? "") }
+        let echoedIDs = content.compactMap { $0["type"]?.stringValue == "tool_use" ? $0["id"]?.stringValue : nil }
+        let echoedSet = Set(echoedIDs)
+        toolResults = toolResults.filter { echoedSet.contains($0["tool_use_id"]?.stringValue ?? "") }
         for id in echoedIDs where !toolResults.contains(where: { $0["tool_use_id"]?.stringValue == id }) {
             toolResults.append(["type": "tool_result", "tool_use_id": .string(id), "content": "Not run (response was cut off).", "is_error": true])
         }
@@ -560,31 +580,39 @@ final class TutorEngine {
     private func attachmentBlocks(_ items: [TutorAttachment]) -> [JSONValue] {
         var out: [JSONValue] = []
         for a in items {
-            out.append(TutorContextBuilder.text("Attached file: \(a.name)"))
-            if let fileID = a.remoteFileID {
-                switch a.kind {
-                case .image:
-                    out.append(["type": "image", "source": ["type": "file", "file_id": .string(fileID)]])
-                case .pdf, .text:
-                    out.append(["type": "document", "source": ["type": "file", "file_id": .string(fileID)], "title": .string(a.name)])
-                }
-                continue
-            }
-            // Not uploaded (offline or upload failed): inline the content instead.
-            let url = document.assetURL(a.localFile)
-            guard let data = try? Data(contentsOf: url) else { continue }
-            switch a.kind {
-            case .image:
-                out.append(["type": "image", "source": ["type": "base64", "media_type": .string(a.mimeType), "data": .string(data.base64EncodedString())]])
-            case .pdf:
-                guard data.count < 20_000_000 else { continue }
-                out.append(["type": "document", "source": ["type": "base64", "media_type": "application/pdf", "data": .string(data.base64EncodedString())], "title": .string(a.name)])
-            case .text:
-                let text = String(decoding: data, as: UTF8.self)
-                out.append(["type": "document", "source": ["type": "text", "media_type": "text/plain", "data": .string(text)], "title": .string(a.name)])
+            if let block = attachmentBlock(a) {
+                out.append(TutorContextBuilder.text("Attached file: \(a.name)"))
+                out.append(block)
+            } else {
+                // Don't let the tutor think it has a file it can't see.
+                out.append(TutorContextBuilder.text("The student attached \(a.name), but it couldn't be included (unreadable or too large)."))
             }
         }
         return out
+    }
+
+    private func attachmentBlock(_ a: TutorAttachment) -> JSONValue? {
+        if let fileID = a.remoteFileID {
+            switch a.kind {
+            case .image:
+                return ["type": "image", "source": ["type": "file", "file_id": .string(fileID)]]
+            case .pdf, .text:
+                return ["type": "document", "source": ["type": "file", "file_id": .string(fileID)], "title": .string(a.name)]
+            }
+        }
+        // Not uploaded (offline or upload failed): inline the content instead.
+        guard let data = try? Data(contentsOf: document.assetURL(a.localFile)) else { return nil }
+        switch a.kind {
+        case .image:
+            return ["type": "image", "source": ["type": "base64", "media_type": .string(a.mimeType), "data": .string(data.base64EncodedString())]]
+        case .pdf:
+            guard data.count < 20_000_000 else { return nil }
+            return ["type": "document", "source": ["type": "base64", "media_type": "application/pdf", "data": .string(data.base64EncodedString())], "title": .string(a.name)]
+        case .text:
+            let text = String(decoding: data, as: UTF8.self)
+            guard !text.trimmed.isEmpty else { return nil }
+            return ["type": "document", "source": ["type": "text", "media_type": "text/plain", "data": .string(text)], "title": .string(a.name)]
+        }
     }
 
     /// Adds a file the tutor can use as context (copied into the note, uploaded to the Files API).
@@ -603,11 +631,18 @@ final class TutorEngine {
         if type?.conforms(to: .pdf) == true {
             kind = .pdf; mime = "application/pdf"
         } else if type?.conforms(to: .image) == true {
+            guard let img = UIImage(data: data) else {
+                chat.append(ChatItem(role: .notice, text: "Couldn't open \(url.lastPathComponent) as an image."))
+                return
+            }
             kind = .image
-            if let img = UIImage(data: data), let jpeg = img.jpegData(compressionQuality: 0.85), ext != "png" {
+            if ext == "png" && data.count <= 3_500_000 && TutorEngine.longestPixelSide(img) <= TutorEngine.maxImageSide {
+                mime = "image/png"
+            } else if let jpeg = TutorEngine.jpegForTutor(img) {
                 payload = jpeg; mime = "image/jpeg"; ext = "jpg"
             } else {
-                mime = ext == "png" ? "image/png" : "image/jpeg"
+                chat.append(ChatItem(role: .notice, text: "Couldn't read \(url.lastPathComponent)."))
+                return
             }
         } else if type?.conforms(to: .text) == true || ["md", "csv", "tex", "txt", "json"].contains(ext) {
             kind = .text; mime = "text/plain"; ext = "txt"

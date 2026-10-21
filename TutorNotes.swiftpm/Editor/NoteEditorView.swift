@@ -17,12 +17,17 @@ struct NoteEditorContainer: View {
         }
         .task {
             if model == nil {
-                // Saves are written on the io queue; let any pending ones land (a note that was
-                // just created, imported or closed) so we don't read back stale or missing files.
-                Storage.ioQueue.sync {}
-                model = EditorModel(document: NoteDocument.load(meta: meta))
+                model = EditorModel(document: NoteEditorContainer.load(meta))
             }
         }
+    }
+
+    /// Saves are written on the io queue: let any pending ones land first (a note that was just
+    /// created, imported or closed) so we don't read back stale or missing files.
+    @MainActor
+    private static func load(_ meta: NoteMeta) -> NoteDocument {
+        Storage.ioQueue.sync {}
+        return NoteDocument.load(meta: meta)
     }
 }
 
