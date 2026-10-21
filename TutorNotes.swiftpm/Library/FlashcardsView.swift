@@ -67,6 +67,7 @@ struct FlashcardsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.top, 20)
                 cardView(card)
+                    .id(card.id)
                     .onTapGesture { withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { flipped.toggle() } }
                 if flipped {
                     HStack(spacing: 12) {
@@ -166,12 +167,15 @@ struct FlashcardsView: View {
     private func grade(_ card: Flashcard, _ g: RecallGrade) {
         store.grade(card, g)
         Haptics.tap()
+        // The next card starts face up, without spinning its answer into view.
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { flipped = false }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
             queue.removeFirst()
             // Forgotten cards come back at the end of this session too.
             if g == .again, let updated = store.cards.first(where: { $0.id == card.id }) { queue.append(updated) }
             reviewed += 1
-            flipped = false
         }
     }
 

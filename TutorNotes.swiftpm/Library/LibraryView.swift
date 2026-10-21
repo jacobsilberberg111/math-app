@@ -83,7 +83,8 @@ struct LibraryView: View {
                 .environmentObject(settings)
         }
         .onChange(of: openNote?.id) { _, id in
-            if id == nil { startRequest = nil }
+            // The request belongs to the note it was made for; switching away drops it.
+            if id != startRequest?.noteID { startRequest = nil }
         }
         .sheet(isPresented: $showPastPaper) {
             PastPaperSetupView(subjectID: currentSubjectID) { meta in openAfterSheet(meta) }
@@ -93,11 +94,15 @@ struct LibraryView: View {
             FlashcardsView().environmentObject(settings)
         }
         .fullScreenCover(isPresented: $showScanner) {
-            DocumentScanner(onFinish: { images in
+            DocumentScanner(onFinish: { pages in
                 showScanner = false
-                guard let url = DocumentScanner.pdf(from: images, name: "Scan \(LibraryView.stamp)"),
+                guard let url = DocumentScanner.pdf(from: pages, name: "Scan \(LibraryView.stamp)"),
                       let meta = library.createNote(fromPDF: url, subjectID: currentSubjectID) else {
-                    importFailed = true
+                    // After the scanner has gone, or the alert is dropped.
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        importFailed = true
+                    }
                     return
                 }
                 openAfterSheet(meta)

@@ -178,6 +178,8 @@ struct PaperSession: Codable, Equatable {
     var finishedAt: Date?
     var summary: String?
     var resultsPage: Int?
+    /// Untimed papers count only time with the note open: the total banked so far.
+    var openSeconds: Double?
 
     var totalMarks: Int { questions.reduce(0) { $0 + $1.marks } }
     var awardedMarks: Int { questions.compactMap(\.awarded).reduce(0, +) }
@@ -186,10 +188,19 @@ struct PaperSession: Codable, Equatable {
     var markedCount: Int { questions.filter { $0.awarded != nil }.count }
     var isRunning: Bool { startedAt != nil && finishedAt == nil }
 
-    func elapsed(at now: Date) -> TimeInterval {
+    /// Time spent. Timed papers run on the wall clock, like an exam; untimed ones count the
+    /// banked open time plus the current stretch since `openSince`.
+    func elapsed(at now: Date, openSince: Date? = nil) -> TimeInterval {
         guard let start = startedAt else { return 0 }
+        if timeLimitMinutes == nil {
+            let live = finishedAt == nil ? openSince.map { max(0, now.timeIntervalSince($0)) } ?? 0 : 0
+            return (openSeconds ?? 0) + live
+        }
         return max(0, (finishedAt ?? now).timeIntervalSince(start))
     }
+
+    /// Finished, with every question marked and the results written up.
+    var isComplete: Bool { finishedAt != nil && resultsPage != nil && markedCount == questions.count }
 
     /// Seconds left on a timed paper (negative once over time); nil when untimed or not started.
     func remaining(at now: Date) -> TimeInterval? {

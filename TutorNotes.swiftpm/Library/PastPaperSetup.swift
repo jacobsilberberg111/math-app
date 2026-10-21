@@ -16,7 +16,10 @@ struct PastPaperSetupView: View {
     @State private var title = ""
     @State private var subject: UUID?
     @State private var minutes = 0
-    @State private var importTarget: Target?
+    // fileImporter clears its isPresented binding before calling back, so the target is kept
+    // separately from the flag.
+    @State private var showImporter = false
+    @State private var importTarget: Target = .paper
     @State private var scanTarget: Target?
     @State private var failed = false
 
@@ -60,17 +63,16 @@ struct PastPaperSetupView: View {
                         .disabled(paperURL == nil)
                 }
             }
-            .fileImporter(isPresented: Binding(get: { importTarget != nil }, set: { if !$0 { importTarget = nil } }),
-                          allowedContentTypes: [.pdf]) { result in
-                guard case .success(let url) = result, let target = importTarget else { return }
-                set(url, for: target)
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf]) { result in
+                guard case .success(let url) = result else { return }
+                set(url, for: importTarget)
             }
             .fullScreenCover(isPresented: Binding(get: { scanTarget != nil }, set: { if !$0 { scanTarget = nil } })) {
-                DocumentScanner(onFinish: { images in
+                DocumentScanner(onFinish: { pages in
                     let target = scanTarget
                     scanTarget = nil
                     let name = target == .markScheme ? "Scanned mark scheme" : "Scanned paper"
-                    if let target, let url = DocumentScanner.pdf(from: images, name: name) { set(url, for: target) }
+                    if let target, let url = DocumentScanner.pdf(from: pages, name: name) { set(url, for: target) }
                 }, onCancel: { scanTarget = nil })
                 .ignoresSafeArea()
             }
@@ -98,7 +100,10 @@ struct PastPaperSetupView: View {
             }
             Spacer()
             Menu {
-                Button { importTarget = target } label: { Label("Choose PDF", systemImage: "folder") }
+                Button {
+                    importTarget = target
+                    showImporter = true
+                } label: { Label("Choose PDF", systemImage: "folder") }
                 if DocumentScanner.isAvailable {
                     Button { scanTarget = target } label: { Label("Scan Pages", systemImage: "doc.viewfinder") }
                 }

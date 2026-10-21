@@ -75,12 +75,20 @@ final class StudyStore {
             .sorted { $0.review.due < $1.review.due }
     }
 
-    /// Adds cards, skipping any whose front is already in the deck.
+    /// Same front text, ignoring case and spacing (but not symbols: "x − 4" and "x + 4" differ).
+    static func frontKey(_ front: String) -> String {
+        front.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    /// Adds cards, skipping any whose front is already in the deck (or earlier in this batch).
     @discardableResult
     func add(_ new: [Flashcard]) -> Int {
-        let existing = Set(cards.map { TopicStats.key($0.front) })
+        var existing = Set(cards.map { StudyStore.frontKey($0.front) })
         var added = 0
-        for c in new where !c.front.trimmed.isEmpty && !c.back.trimmed.isEmpty && !existing.contains(TopicStats.key(c.front)) {
+        for c in new where !c.front.trimmed.isEmpty && !c.back.trimmed.isEmpty {
+            let key = StudyStore.frontKey(c.front)
+            guard !existing.contains(key) else { continue }
+            existing.insert(key)
             cards.append(c)
             added += 1
         }

@@ -52,7 +52,7 @@ enum TutorPrompts {
             + (firstPaperPage > 0 ? "; the paper's first page is the note's page \(firstPaperPage + 1), so give note page numbers" : "")
             + "). Read the attached paper"
             + (hasMarkScheme ? " and its mark scheme" : "")
-            + ", then call outline_paper once with every question part that earns marks, in order: its label as printed (e.g. \"3(b)(ii)\"), the page it starts on, the y on that page where it starts (page coordinates, estimate from the page images), its marks, and a short topic name. Don't write on the page. Then reply with one short, friendly line such as \"12 questions, 80 marks: start whenever you're ready.\""
+            + ", then call outline_paper once with every lowest-level part that earns marks, in order (list 3(a) and 3(b), not 3 as well): its label as printed (e.g. \"3(b)(ii)\"), the note page it starts on, the y where it starts (the note's pages are the PDF's pages scaled to \(Int(pageSize.width)) pt wide, so y = how far down the PDF page it starts, as a fraction, × \(Int(pageSize.height))), its marks, and a short topic name. Pass paper_total if the paper prints one. Don't write on the page. Then reply with one short, friendly line such as \"12 questions, 80 marks: start whenever you're ready.\""
     }
 
     static func markPaperQuestion(_ q: PaperQuestion) -> String {
@@ -61,15 +61,15 @@ enum TutorPrompts {
 
     static func finishPaper(_ paper: PaperSession) -> String {
         var s = "I've finished the paper"
-        if let start = paper.startedAt, let end = paper.finishedAt {
-            s += " (took \(Int(end.timeIntervalSince(start) / 60)) min"
+        if paper.startedAt != nil, let end = paper.finishedAt {
+            s += " (took \(Int(paper.elapsed(at: end) / 60)) min"
             if let limit = paper.timeLimitMinutes { s += " of \(limit)" }
             s += ")"
         }
         let unmarked = paper.questions.filter { $0.awarded == nil }.map(\.label)
         s += ". Mark every question I haven't had marked yet"
         if !unmarked.isEmpty { s += " (\(unmarked.joined(separator: ", ")))" }
-        s += " against the mark scheme: ticks where marks are earned, a short note where they're lost, and score_paper for each one (0 for anything left blank). Then call paper_summary with my strengths, what to review, and the next steps."
+        s += " against the mark scheme: ticks where marks are earned, a short note where they're lost, and score_paper for each one. Pages not shown have no writing on them, so their questions score 0. Make several tool calls per response to get through it, then call paper_summary with my strengths, what to review, and the next steps."
         return s
     }
 

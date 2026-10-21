@@ -155,7 +155,7 @@ The demo video is recorded by launching the app with `-demo-script`. Student han
 
 - Not tested on a physical iPad yet (see the status note above).
 - Freeform boards grow right and down only, up to 16,384 pt a side.
-- "Undo the tutor" removes the tutor's marks from a past paper, but not the scores it recorded. To fix a score, ask the tutor to re-mark the question.
+- "Undo the tutor" restores a past paper's scores and removes pages the tutor added, but topic progress already recorded from that marking stays.
 - Lasso selects ink only. Typed and tutor elements are selected with the Select tool or a long-press.
 - The page map sent to the tutor gets long for pages with many strokes. Very dense pages may need tuning.
 - iCloud sync and collaboration aren't implemented. Notes are stored locally in the app's Documents folder.

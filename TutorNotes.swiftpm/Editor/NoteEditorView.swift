@@ -88,8 +88,9 @@ struct NoteEditorView: View {
             }
             if !settings.isTutorConfigured && !settings.hasSeenOnboarding { model.showTutor = true }
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { model.resumeStudyClock() } else { model.pauseStudyClock() }
+        .onChange(of: scenePhase) { old, phase in
+            // Only leaving .active counts what came before (active → inactive → background).
+            if phase == .active { model.resumeStudyClock() } else if old == .active { model.pauseStudyClock() }
             if phase != .active {
                 model.tutor.saveNow()
                 // Only when something changed: saving stamps the note's modified date.
@@ -132,9 +133,9 @@ struct NoteEditorView: View {
         .sheet(isPresented: $model.showPaper) { PaperPicker(model: model) }
         .sheet(isPresented: $model.showPaperQuestions) { PaperQuestionsSheet(model: model) }
         .fullScreenCover(isPresented: $showScanner) {
-            DocumentScanner(onFinish: { images in
+            DocumentScanner(onFinish: { pages in
                 showScanner = false
-                addScannedPages(images)
+                addScannedPages(pages)
             }, onCancel: { showScanner = false })
             .ignoresSafeArea()
         }
@@ -196,8 +197,8 @@ struct NoteEditorView: View {
     }
 
     /// Scanned pages go after the note's pages, ready to write on.
-    private func addScannedPages(_ images: [UIImage]) {
-        guard let url = DocumentScanner.pdf(from: images, name: "Scan"),
+    private func addScannedPages(_ pages: [Data]) {
+        guard let url = DocumentScanner.pdf(from: pages, name: "Scan"),
               let asset = model.document.storePDF(from: url) else {
             model.flash("Couldn't add the scan")
             return
@@ -206,7 +207,7 @@ struct NoteEditorView: View {
         if let first = model.document.content.pages.firstIndex(where: { $0.pdfAssetID == asset }) {
             model.canvas?.scrollToPage(first)
         }
-        model.flash("Added \(images.count) page\(images.count == 1 ? "" : "s")")
+        model.flash("Added \(pages.count) page\(pages.count == 1 ? "" : "s")")
     }
 
     private func export() {

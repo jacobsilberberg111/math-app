@@ -76,6 +76,7 @@ final class TutorEngine {
         self.executor = CanvasActionExecutor(document: document, memory: TutorMemoryStore.shared)
         self.observerExecutor = CanvasActionExecutor(document: document, memory: TutorMemoryStore.shared)
         self.watching = AppSettings.shared.proactive
+        observerExecutor.allowsStudyTools = false
         load()
         startStuckWatcher()
     }
@@ -171,7 +172,7 @@ final class TutorEngine {
             // (history, records, busy state) before this one starts, so the two never interleave.
             await previous?.value
             await self?.runTurn(userContent: content, replyID: reply.id, focusDoc: focusDoc,
-                                attachmentIDs: attachmentIDs, notes: notes)
+                                attachmentIDs: attachmentIDs, notes: notes, maxSteps: allPages ? 40 : 12)
         }
     }
 
@@ -263,8 +264,9 @@ final class TutorEngine {
         change(&chat[i])
     }
 
+    /// `maxSteps` caps the model responses in one turn (marking a whole paper needs many).
     private func runTurn(userContent: [JSONValue]?, replyID: UUID, focusDoc: CGRect?,
-                         attachmentIDs: [String] = [], notes: [String] = []) async {
+                         attachmentIDs: [String] = [], notes: [String] = [], maxSteps: Int = 12) async {
         isBusy = true
         lastErrorRetryable = false
         statusText = "Looking at your page…"
@@ -278,7 +280,7 @@ final class TutorEngine {
         var producedOutput = false
         do {
             var iterations = 0
-            while iterations < 12 {
+            while iterations < maxSteps {
                 iterations += 1
                 try Task.checkCancellation()
                 let result = try await streamOnce(messages: apiMessages, model: settings.tutorModel, effort: settings.effort,

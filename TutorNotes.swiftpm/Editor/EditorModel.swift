@@ -48,6 +48,8 @@ final class EditorModel: CanvasHost {
     @ObservationIgnored private var studySince = Date()
     /// Watching setting to restore after a timed paper (exam conditions switch it off).
     @ObservationIgnored private var watchingBeforeExam: Bool?
+    /// Start of the current stretch with an untimed paper open (see PaperSession.openSeconds).
+    @ObservationIgnored private(set) var paperOpenSince: Date?
 
     init(document: NoteDocument) {
         self.document = document
@@ -212,9 +214,23 @@ final class EditorModel: CanvasHost {
     func pauseStudyClock() {
         StudyStore.shared.logStudy(from: studySince, to: Date())
         studySince = Date()
+        bankPaperTime()
+        paperOpenSince = nil
     }
 
-    func resumeStudyClock() { studySince = Date() }
+    func resumeStudyClock() {
+        studySince = Date()
+        if let paper = document.content.paper, paper.timeLimitMinutes == nil, paper.isRunning { paperOpenSince = Date() }
+    }
+
+    /// Adds the current stretch to an untimed paper's open time.
+    private func bankPaperTime() {
+        guard let since = paperOpenSince, var paper = document.content.paper, paper.timeLimitMinutes == nil, paper.isRunning else { return }
+        paper.openSeconds = (paper.openSeconds ?? 0) + max(0, Date().timeIntervalSince(since))
+        document.content.paper = paper
+        document.markDirty()
+        paperOpenSince = Date()
+    }
 
     // MARK: Past papers
 
@@ -227,6 +243,12 @@ final class EditorModel: CanvasHost {
             paper.startedAt = Date()
             document.content.paper = paper
             document.markDirty()
+        }
+        if paper.timeLimitMinutes == nil && paper.isRunning { paperOpenSince = Date() }
+        // Reopening a timed paper mid-exam keeps exam conditions.
+        if paper.timeLimitMinutes != nil && paper.isRunning && watchingBeforeExam == nil {
+            watchingBeforeExam = tutor.watching
+            tutor.watching = false
         }
         guard !paper.outlined, AppSettings.shared.isTutorConfigured else { return }
         Task { [weak self] in
@@ -270,6 +292,8 @@ final class EditorModel: CanvasHost {
     }
 
     func finishPaper() {
+        bankPaperTime()
+        paperOpenSince = nil
         if let before = watchingBeforeExam {
             tutor.watching = before
             watchingBeforeExam = nil

@@ -52,6 +52,12 @@ struct PaperBar: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .disabled(tutor.isBusy || !paper.outlined)
+            } else if !paper.isComplete {
+                // Marking stopped part-way (a very long paper, or an error): carry on from here.
+                Button("Mark Remaining") { model.finishPaper() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(tutor.isBusy)
             } else if let page = paper.resultsPage {
                 Button("Results") { model.canvas?.scrollToPage(page) }
                     .buttonStyle(.bordered)
@@ -78,15 +84,15 @@ struct PaperBar: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .disabled(!paper.outlined && settings.isTutorConfigured)
-        } else if let end = paper.finishedAt {
-            Text("Finished in \(PaperBar.clock(end.timeIntervalSince(paper.startedAt ?? end)))")
+        } else if paper.finishedAt != nil {
+            Text("Finished in \(PaperBar.clock(paper.elapsed(at: now)))")
                 .foregroundStyle(.secondary)
         } else if let remaining = paper.remaining(at: now) {
             Text(remaining >= 0 ? "\(PaperBar.clock(remaining)) left" : "Over by \(PaperBar.clock(-remaining))")
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .foregroundStyle(remaining < 300 ? Color.red : Color.primary)
         } else {
-            Text(PaperBar.clock(paper.elapsed(at: now)))
+            Text(PaperBar.clock(paper.elapsed(at: now, openSince: model.paperOpenSince)))
                 .font(.subheadline.weight(.semibold).monospacedDigit())
         }
     }

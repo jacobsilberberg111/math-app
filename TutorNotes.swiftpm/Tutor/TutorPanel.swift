@@ -63,9 +63,9 @@ struct TutorPanel: View {
         }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .fullScreenCover(isPresented: $showScanner) {
-            DocumentScanner(onFinish: { images in
+            DocumentScanner(onFinish: { pages in
                 showScanner = false
-                if let url = DocumentScanner.pdf(from: images, name: "Scanned pages") { tutor.attachFile(url) }
+                if let url = DocumentScanner.pdf(from: pages, name: "Scanned pages") { tutor.attachFile(url) }
             }, onCancel: { showScanner = false })
             .ignoresSafeArea()
         }

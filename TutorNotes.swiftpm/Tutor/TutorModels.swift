@@ -39,14 +39,22 @@ struct TurnRecord {
     /// Student strokes the tutor erased. Reverting puts just these back, so ink the student
     /// wrote afterwards is kept (restoring a whole earlier drawing would wipe it).
     var erasedStrokes: [PKStroke] = []
+    /// The past paper's state before the turn first changed it (outline, scores, results).
+    var paperBefore: PaperSession?
+    /// Pages the tutor added; reverting removes them again if they're still blank.
+    var appendedPageIDs: [UUID] = []
 
-    var isEmpty: Bool { created.isEmpty && originals.isEmpty && removed.isEmpty && erasedStrokes.isEmpty }
+    var isEmpty: Bool {
+        created.isEmpty && originals.isEmpty && removed.isEmpty && erasedStrokes.isEmpty && paperBefore == nil && appendedPageIDs.isEmpty
+    }
 
     mutating func merge(_ other: TurnRecord) {
         created.append(contentsOf: other.created)
         for (k, v) in other.originals where originals[k] == nil { originals[k] = v }
         removed.append(contentsOf: other.removed)
         erasedStrokes.append(contentsOf: other.erasedStrokes)
+        if paperBefore == nil { paperBefore = other.paperBefore }
+        appendedPageIDs.append(contentsOf: other.appendedPageIDs)
     }
 }
 

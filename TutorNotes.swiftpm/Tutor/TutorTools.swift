@@ -222,7 +222,7 @@ enum TutorTools {
              object([("note", prop("string", "The note, one sentence."))], required: ["note"])),
 
         tool("make_flashcards",
-             "Add flashcards to the student's spaced-repetition deck (reviewed from the Home screen). Use when they ask for flashcards, or to capture a key fact or a mistake worth remembering. Fronts and backs may use $...$ math.",
+             "Add flashcards to the student's spaced-repetition deck (reviewed from the Home screen). Only when the student asks for flashcards or agrees to them. Fronts and backs may use $...$ math.",
              object([
                 ("cards", ["type": "array", "description": "The cards to add.",
                            "items": object([("front", prop("string", "Short question or prompt.")),
@@ -232,8 +232,9 @@ enum TutorTools {
              ], required: ["cards"])),
 
         tool("outline_paper",
-             "Past papers only: record every question part that earns marks, in order, so the student can jump to questions, be marked per question and see a score. Call once after reading the paper (again only to correct it; it replaces the outline).",
+             "Past papers only: record every lowest-level question part that earns marks, in order (not a question and its parts too), so the student can jump to questions, be marked per question and see a score. Call once after reading the paper (again only to correct it; it replaces the outline).",
              object([
+                ("paper_total", prop("integer", "The paper's printed total marks, if shown (used to check the outline).")),
                 ("questions", ["type": "array", "description": "Question parts in order.",
                                "items": object([("label", prop("string", "As printed, e.g. \"3(b)(ii)\".")),
                                                 ("page", prop("integer", "Page it starts on (1-based).")),

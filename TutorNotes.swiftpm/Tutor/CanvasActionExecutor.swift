@@ -149,6 +149,16 @@ final class CanvasActionExecutor {
             d.strokes.append(contentsOf: r.erasedStrokes.filter { !present.contains(strokeKey($0)) })
             doc.replaceDrawing(d, actionName: "Undo Tutor")
         }
+        if let paper = r.paperBefore {
+            doc.content.paper = paper
+            doc.markDirty()
+        }
+        // Pages the tutor added, newest first, if nothing has been put on them since.
+        for id in r.appendedPageIDs.reversed() {
+            guard let i = doc.content.pages.firstIndex(where: { $0.id == id }), doc.content.pages.count > 1,
+                  doc.elements(onPage: i).isEmpty, doc.strokes(onPage: i).isEmpty else { continue }
+            doc.deletePage(i)
+        }
     }
 
     private static func strokeKey(_ s: PKStroke) -> String {
@@ -156,6 +166,26 @@ final class CanvasActionExecutor {
     }
 
     // MARK: Helpers
+
+    /// Call before changing the past paper's state, so reverting the turn restores it.
+    private func notePaperChange() {
+        if responseRecord.paperBefore == nil && turnRecord.paperBefore == nil {
+            responseRecord.paperBefore = document.content.paper
+        }
+    }
+
+    /// Adds a page at the end and remembers it, so reverting the turn can take it away again.
+    @discardableResult
+    private func appendPage(paper: PaperStyle? = nil) -> Int {
+        document.appendPage(paper: paper)
+        if let page = document.content.pages.last { responseRecord.appendedPageIDs.append(page.id) }
+        return document.content.pages.count - 1
+    }
+
+    /// Glances (proactive observation) don't get the paper and flashcard tools: they haven't
+    /// seen the mark scheme, and the student didn't ask.
+    var allowsStudyTools = true
+    static let studyTools: Set<String> = ["make_flashcards", "outline_paper", "score_paper", "paper_summary"]
 
     func resolvePage(_ n: Int?) throws -> Int {
         if document.isFreeform {
@@ -168,8 +198,7 @@ final class CanvasActionExecutor {
         let count = document.content.pages.count
         if n >= 1 && n <= count { return n - 1 }
         if n == count + 1 {
-            document.appendPage()
-            return count
+            return appendPage()
         }
         throw ToolInputError(message: "Page \(n) doesn't exist (the note has \(count) page\(count == 1 ? "" : "s"); use \(count + 1) to add one).")
     }
@@ -360,6 +389,9 @@ final class CanvasActionExecutor {
 
     func execute(toolID: String, name: String, input: JSONValue) -> Outcome {
         let args = ToolArgs(json: input)
+        if !allowsStudyTools && CanvasActionExecutor.studyTools.contains(name) {
+            return Outcome(result: "\(name) isn't available while glancing; wait until the student asks.", isError: true, action: nil)
+        }
         do {
             switch name {
             case "write": return try write(toolID: toolID, args)
@@ -736,8 +768,7 @@ final class CanvasActionExecutor {
                 y = bottom + 30
             }
         } else if args.bool("new_page") == true {
-            document.appendPage()
-            page = document.content.pages.count - 1
+            page = appendPage()
             y = 50
         } else if let p = args.int("page") {
             page = try resolvePage(p)
@@ -747,8 +778,7 @@ final class CanvasActionExecutor {
                 y = free
             } else {
                 // No room left on that page: don't stack the card on top of what's there.
-                document.appendPage()
-                page = document.content.pages.count - 1
+                page = appendPage()
                 y = 50
             }
         } else {
@@ -761,14 +791,12 @@ final class CanvasActionExecutor {
                 page += 1
                 y = free
             } else {
-                document.appendPage()
-                page = document.content.pages.count - 1
+                page = appendPage()
                 y = 50
             }
         }
         if !document.isFreeform && y + height > pageHeight - 20 {
-            document.appendPage()
-            page = document.content.pages.count - 1
+            page = appendPage()
             y = 50
         }
         q.number = document.nextQuestionNumber()
@@ -981,8 +1009,7 @@ final class CanvasActionExecutor {
             document.insertPage(after: after - 1, paper: paper)
             number = after + 1
         } else {
-            document.appendPage(paper: paper)
-            number = document.content.pages.count
+            number = appendPage(paper: paper) + 1
         }
         return Outcome(result: "Added page \(number) (the note now has \(document.content.pages.count) pages).", isError: false,
                        action: ChatAction(symbol: "doc.badge.plus", summary: "Added page \(number)", page: number - 1))
@@ -1052,6 +1079,7 @@ final class CanvasActionExecutor {
 
     private func outlinePaper(_ args: ToolArgs) throws -> Outcome {
         var paper = try currentPaper()
+        notePaperChange()
         let pageCount = document.content.pages.count
         let h = pageHeight
         var qs: [PaperQuestion] = []
@@ -1086,8 +1114,12 @@ final class CanvasActionExecutor {
         paper.outlined = true
         document.content.paper = paper
         document.markDirty()
-        return Outcome(result: "Outlined \(qs.count) question parts, \(paper.totalMarks) marks in total, across \(Set(qs.map(\.page)).count) page\(Set(qs.map(\.page)).count == 1 ? "" : "s").",
-                       isError: false, action: ChatAction(symbol: "list.bullet.rectangle", summary: "Mapped \(qs.count) questions"))
+        let pages = Set(qs.map(\.page)).count
+        var result = "Outlined \(qs.count) question parts, \(paper.totalMarks) marks in total, across \(pages) page\(pages == 1 ? "" : "s")."
+        if let printed = args.int("paper_total"), printed != paper.totalMarks {
+            result += " Warning: the paper's printed total is \(printed), so some marks are missing or counted twice (list only the lowest-level parts, not a question and its parts). Call outline_paper again with the corrected list."
+        }
+        return Outcome(result: result, isError: false, action: ChatAction(symbol: "list.bullet.rectangle", summary: "Mapped \(qs.count) questions"))
     }
 
     private func scorePaper(_ args: ToolArgs) throws -> Outcome {
@@ -1097,6 +1129,7 @@ final class CanvasActionExecutor {
             throw ToolInputError(message: "No question \(label) in the outline. Questions: " + paper.questions.map(\.label).joined(separator: ", ") + ".")
         }
         guard let raw = args.int("awarded") else { throw ToolInputError(message: "Missing 'awarded'.") }
+        notePaperChange()
         var q = paper.questions[i]
         let awarded = max(0, min(q.marks, raw))
         let firstTime = q.awarded == nil
@@ -1138,8 +1171,8 @@ final class CanvasActionExecutor {
         let strengths = args.array("strengths").compactMap { $0.stringValue?.trimmed }.filter { !$0.isEmpty }
         let review = args.array("to_review").compactMap { $0.stringValue?.trimmed }.filter { !$0.isEmpty }
         let next = args.string("next_steps")
-        document.appendPage(paper: PaperStyle(pattern: .blank, color: .white))
-        var page = document.content.pages.count - 1
+        notePaperChange()
+        var page = appendPage(paper: PaperStyle(pattern: .blank, color: .white))
         let firstPage = page
         let width = pageWidth - 112
         let hex = settings.tutorInkHex
@@ -1150,8 +1183,7 @@ final class CanvasActionExecutor {
             let t = TextContent(text: s, style: style, fontSize: size, colorHex: color, rich: true)
             let h = ElementRenderer.measureText(t, author: .tutor, width: width, env: env).height
             if y + h > pageHeight - 40 {
-                document.appendPage(paper: PaperStyle(pattern: .blank, color: .white))
-                page = document.content.pages.count - 1
+                page = appendPage(paper: PaperStyle(pattern: .blank, color: .white))
                 y = 56
             }
             ids.append(addTutorElement(page: page, frame: CGRect(x: 56, y: y, width: width, height: h), kind: .text(t)).id)
@@ -1162,8 +1194,8 @@ final class CanvasActionExecutor {
         let pct = total > 0 ? Int((Double(got) / Double(total) * 100).rounded()) : 0
         text("Results: \(got)/\(total) (\(pct)%)", style: .heading, size: 32, gap: 4)
         var facts: [String] = []
-        if let start = paper.startedAt, let end = paper.finishedAt {
-            facts.append("Time: \(max(1, Int(end.timeIntervalSince(start) / 60))) min" + (paper.timeLimitMinutes.map { " of \($0)" } ?? ""))
+        if paper.startedAt != nil, let end = paper.finishedAt {
+            facts.append("Time: \(max(1, Int(paper.elapsed(at: end) / 60))) min" + (paper.timeLimitMinutes.map { " of \($0)" } ?? ""))
         }
         facts.append("\(paper.markedCount) of \(paper.questions.count) questions marked")
         text(facts.joined(separator: " · "), style: .note, size: 16, color: "#57606A", gap: 18)
@@ -1182,8 +1214,7 @@ final class CanvasActionExecutor {
             let t = TableContent(rows: [["Question", "Marks", "Topic"]] + chunk, header: true, fontSize: 14)
             let size = ElementRenderer.tableSize(t, maxWidth: columnWidth)
             if rowTop + size.height > pageHeight - 40 {
-                document.appendPage(paper: PaperStyle(pattern: .blank, color: .white))
-                page = document.content.pages.count - 1
+                page = appendPage(paper: PaperStyle(pattern: .blank, color: .white))
                 rowTop = 56
                 column = 0
             }

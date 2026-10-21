@@ -81,7 +81,7 @@ struct LayoutAssistant {
     func clamp(_ r: CGRect) -> CGRect {
         // A board grows, so anything on it is fine; only keep clear of the top and left edges.
         let b = doc.isFreeform
-            ? CGRect(x: 0, y: 0, width: max(r.maxX + 16, 400), height: NoteDocument.boardMaxSide)
+            ? CGRect(x: 0, y: 0, width: min(NoteDocument.boardMaxSide, max(r.maxX + 16, 400)), height: NoteDocument.boardMaxSide)
             : bounds
         var c = r
         c.size.width = min(c.width, b.width - 16)
