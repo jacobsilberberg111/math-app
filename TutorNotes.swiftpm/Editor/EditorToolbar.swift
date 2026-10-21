@@ -1,0 +1,473 @@
+import SwiftUI
+import PhotosUI
+
+/// Top navigation row: back, title, undo/redo, pages, insert, record, share, tutor.
+struct EditorTopBar: View {
+    @Bindable var model: EditorModel
+    var onClose: () -> Void
+    var onInsertPhoto: () -> Void
+    var onImportPDF: () -> Void
+    var onExport: () -> Void
+    @State private var editingTitle = false
+    @State private var titleDraft = ""
+    @FocusState private var titleFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: onClose) {
+                Image(systemName: "chevron.backward")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 40, height: 40)
+            }
+            .accessibilityLabel("Library")
+
+            if editingTitle {
+                TextField("Title", text: $titleDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 320)
+                    .focused($titleFocused)
+                    .onSubmit(commitTitle)
+                    .onChange(of: titleFocused) { _, focused in if !focused { commitTitle() } }
+            } else {
+                Button {
+                    titleDraft = model.document.meta.title
+                    editingTitle = true
+                    titleFocused = true
+                } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(model.document.meta.title)
+                            .font(.system(size: 17, weight: .semibold))
+                            .lineLimit(1)
+                            .foregroundStyle(.primary)
+                        Text("Page \(model.currentPage + 1) of \(model.pageCount)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer(minLength: 12)
+
+            Group {
+                BarButton(symbol: "arrow.uturn.backward", label: "Undo", enabled: model.canUndo) { model.undo() }
+                BarButton(symbol: "arrow.uturn.forward", label: "Redo", enabled: model.canRedo) { model.redo() }
+                Divider().frame(height: 22).padding(.horizontal, 4)
+                BarButton(symbol: "square.grid.2x2", label: "Pages") { model.showPages = true }
+                Menu {
+                    Button { onInsertPhoto() } label: { Label("Photo", systemImage: "photo") }
+                    Button { onImportPDF() } label: { Label("PDF Pages", systemImage: "doc.richtext") }
+                    Button { model.selectTool(.text) } label: { Label("Text Box", systemImage: "textformat") }
+                    Divider()
+                    Button { model.document.appendPage(); model.canvas?.scrollToPage(model.pageCount - 1) } label: { Label("New Page", systemImage: "doc.badge.plus") }
+                    Button { model.showPaper = true } label: { Label("Paper Style", systemImage: "square.grid.3x3") }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .medium))
+                        .frame(width: 40, height: 40)
+                }
+                .accessibilityLabel("Insert")
+                RecordButton(audio: model.audio)
+                BarButton(symbol: "square.and.arrow.up", label: "Export") { onExport() }
+            }
+            TutorToggleButton(model: model)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(.bar)
+    }
+
+    private func commitTitle() {
+        editingTitle = false
+        let t = titleDraft.trimmed
+        if !t.isEmpty && t != model.document.meta.title {
+            model.document.meta.title = t
+            model.document.markDirty()
+        }
+    }
+}
+
+struct BarButton: View {
+    let symbol: String
+    let label: String
+    var enabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 40, height: 40)
+        }
+        .disabled(!enabled)
+        .accessibilityLabel(label)
+    }
+}
+
+struct RecordButton: View {
+    let audio: AudioController
+
+    var body: some View {
+        Button {
+            audio.toggleRecording()
+        } label: {
+            ZStack {
+                if audio.isRecording {
+                    Circle().fill(Color.red.opacity(0.15)).frame(width: 34, height: 34)
+                }
+                Image(systemName: audio.isRecording ? "stop.circle.fill" : "mic")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(audio.isRecording ? Color.red : Color.accentColor)
+            }
+            .frame(width: 40, height: 40)
+        }
+        .accessibilityLabel(audio.isRecording ? "Stop recording" : "Record audio")
+    }
+}
+
+/// The tutor button glows while the tutor is thinking or watching.
+struct TutorToggleButton: View {
+    @Bindable var model: EditorModel
+    @EnvironmentObject var settings: AppSettings
+
+    var body: some View {
+        Button {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { model.showTutor.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                TutorOrb(active: model.tutor.isBusy || model.tutor.isObserving, size: 22)
+                Text("Tutor").font(.system(size: 15, weight: .semibold))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(model.showTutor ? Color(hex: settings.tutorInkHex).opacity(0.16) : Color.secondary.opacity(0.08))
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Tutor")
+    }
+}
+
+/// Animated orb representing the tutor.
+struct TutorOrb: View {
+    var active: Bool
+    var size: CGFloat = 26
+    @EnvironmentObject var settings: AppSettings
+    @State private var pulse = false
+
+    var body: some View {
+        let tint = Color(hex: settings.tutorInkHex)
+        ZStack {
+            Circle()
+                .fill(LinearGradient(colors: [tint.opacity(0.7), tint], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .shadow(color: tint.opacity(active ? 0.7 : 0.3), radius: active ? 6 : 2)
+                .scaleEffect(active && pulse ? 1.1 : 1)
+            Image(systemName: "sparkle")
+                .font(.system(size: size * 0.5, weight: .bold))
+                .foregroundStyle(.white)
+                .rotationEffect(.degrees(active && pulse ? 180 : 0))
+        }
+        .frame(width: size, height: size)
+        .onAppear { updateAnimation() }
+        .onChange(of: active) { _, _ in updateAnimation() }
+    }
+
+    private func updateAnimation() {
+        if active {
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { pulse = true }
+        } else {
+            withAnimation(.easeOut(duration: 0.3)) { pulse = false }
+        }
+    }
+}
+
+// MARK: - Tool strip
+
+struct EditorToolStrip: View {
+    @Bindable var model: EditorModel
+    @EnvironmentObject var settings: AppSettings
+    @State private var showPenStyles = false
+    @State private var editingColorIndex: Int?
+    @State private var editingWidthIndex: Int?
+
+    var tools: ToolState { model.tools }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 2) {
+                ForEach([CanvasToolKind.pen, .highlighter, .eraser, .lasso, .text, .select], id: \.self) { kind in
+                    toolButton(kind)
+                }
+                Divider().frame(height: 24).padding(.horizontal, 4)
+                tutorToolButton
+            }
+            .padding(4)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.secondary.opacity(0.08)))
+
+            contextual
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 2) {
+                ToggleIcon(symbol: "ruler", isOn: tools.rulerActive, label: "Ruler") { tools.rulerActive.toggle() }
+                ToggleIcon(symbol: "scribble.variable", isOn: settings.shapeRecognition, label: "Shape recognition") {
+                    settings.shapeRecognition.toggle()
+                    model.flash(settings.shapeRecognition ? "Draw and hold to snap shapes" : "Shape recognition off")
+                }
+                ToggleIcon(symbol: "hand.draw", isOn: settings.fingerDrawing, label: "Draw with finger") {
+                    settings.fingerDrawing.toggle()
+                    model.flash(settings.fingerDrawing ? "Finger drawing on" : "Pencil only · fingers scroll")
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    @ViewBuilder
+    private func toolButton(_ kind: CanvasToolKind) -> some View {
+        let selected = tools.kind == kind
+        Button {
+            if kind == .pen && selected {
+                showPenStyles = true
+            } else {
+                model.selectTool(kind)
+            }
+        } label: {
+            ZStack(alignment: .bottom) {
+                Image(systemName: kind == .pen ? tools.penStyle.symbol : kind.symbol)
+                    .font(.system(size: 19, weight: selected ? .semibold : .regular))
+                    .frame(width: 42, height: 38)
+                    .foregroundStyle(selected ? Color.accentColor : Color.primary)
+                if kind == .pen || kind == .highlighter {
+                    let hex = kind == .pen ? (tools.penColors[safe: tools.penColorIndex] ?? "#000000") : (tools.highlighterColors[safe: tools.highlighterColorIndex] ?? "#FFE066")
+                    Capsule().fill(Color(hex: hex)).frame(width: 18, height: 3).offset(y: -1)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(selected ? Color.accentColor.opacity(0.14) : .clear))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(kind.title)
+        .popover(isPresented: Binding(get: { kind == .pen && showPenStyles }, set: { showPenStyles = $0 })) {
+            PenStylePicker(selection: Binding(get: { tools.penStyle }, set: { tools.penStyle = $0; showPenStyles = false }))
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var tutorToolButton: some View {
+        let selected = tools.kind == .tutor
+        let tint = Color(hex: settings.tutorInkHex)
+        return Button {
+            model.selectTool(selected ? tools.lastDrawingKind : .tutor)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 16, weight: .semibold))
+                Text("Ask").font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundStyle(selected ? .white : tint)
+            .padding(.horizontal, 10)
+            .frame(height: 38)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(selected ? tint : tint.opacity(0.1)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ask tutor about an area")
+    }
+
+    @ViewBuilder
+    private var contextual: some View {
+        switch tools.kind {
+        case .pen, .highlighter, .text:
+            HStack(spacing: 14) {
+                HStack(spacing: 8) {
+                    ForEach(Array(tools.colors.enumerated()), id: \.offset) { i, hex in
+                        colorDot(i, hex)
+                    }
+                }
+                if tools.kind != .text {
+                    Divider().frame(height: 22)
+                    HStack(spacing: 6) {
+                        ForEach(Array(tools.widths.enumerated()), id: \.offset) { i, w in
+                            widthDot(i, w)
+                        }
+                    }
+                }
+            }
+        case .eraser:
+            HStack(spacing: 12) {
+                Picker("Eraser", selection: Binding(get: { tools.eraserMode }, set: { tools.eraserMode = $0 })) {
+                    Text("Stroke").tag(EraserMode.stroke)
+                    Text("Pixel").tag(EraserMode.pixel)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 170)
+                if tools.eraserMode == .pixel {
+                    Slider(value: Binding(get: { Double(tools.eraserWidth) }, set: { tools.eraserWidth = CGFloat($0) }), in: 4...80)
+                        .frame(width: 140)
+                }
+            }
+        case .lasso:
+            hint("Circle ink to select it, then drag to move or tap for options")
+        case .select:
+            hint("Tap anything to select it · drag to move · long-press works in any tool")
+        case .tutor:
+            hint("Drag around anything — or tap it — to ask your tutor about it", tint: Color(hex: settings.tutorInkHex))
+        }
+    }
+
+    private func hint(_ text: String, tint: Color = .secondary) -> some View {
+        Text(text)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+    }
+
+    private func colorDot(_ i: Int, _ hex: String) -> some View {
+        let selected = i == tools.colorIndex
+        return Button {
+            if selected { editingColorIndex = i } else { tools.selectColor(i) }
+        } label: {
+            ZStack {
+                Circle().fill(Color(hex: hex)).frame(width: 24, height: 24)
+                Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1).frame(width: 24, height: 24)
+                if selected {
+                    Circle().strokeBorder(Color.accentColor, lineWidth: 2.5).frame(width: 32, height: 32)
+                }
+            }
+            .frame(width: 34, height: 34)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Colour \(i + 1)")
+        .popover(isPresented: Binding(get: { editingColorIndex == i }, set: { if !$0 { editingColorIndex = nil } })) {
+            ColorPalettePicker(hex: Binding(get: { tools.colors[safe: i] ?? hex }, set: { tools.setColor($0, at: i) }),
+                               highlighter: tools.kind == .highlighter)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private func widthDot(_ i: Int, _ w: CGFloat) -> some View {
+        let selected = i == tools.widthIndex
+        let maxW = tools.widths.max() ?? 1
+        let d = 6 + 14 * (w / max(maxW, 1))
+        return Button {
+            if selected { editingWidthIndex = i } else { tools.selectWidth(i) }
+        } label: {
+            ZStack {
+                if selected {
+                    RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.14)).frame(width: 32, height: 32)
+                }
+                Circle().fill(Color.primary.opacity(0.85)).frame(width: d, height: d)
+            }
+            .frame(width: 34, height: 34)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Width \(i + 1)")
+        .popover(isPresented: Binding(get: { editingWidthIndex == i }, set: { if !$0 { editingWidthIndex = nil } })) {
+            WidthEditor(width: Binding(get: { tools.widths[safe: i] ?? w }, set: { tools.setWidth($0, at: i) }),
+                        range: tools.kind == .highlighter ? 4...40 : 0.8...16,
+                        colorHex: tools.colors[safe: tools.colorIndex] ?? "#1F2328")
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+struct ToggleIcon: View {
+    let symbol: String
+    let isOn: Bool
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+                .frame(width: 38, height: 38)
+                .background(RoundedRectangle(cornerRadius: 9).fill(isOn ? Color.accentColor.opacity(0.13) : .clear))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+struct PenStylePicker: View {
+    @Binding var selection: PenStyle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Pen").font(.headline).padding(.bottom, 6)
+            ForEach(PenStyle.allCases) { style in
+                Button {
+                    selection = style
+                } label: {
+                    HStack {
+                        Image(systemName: style.symbol).frame(width: 26)
+                        Text(style.title)
+                        Spacer()
+                        if style == selection { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+                    }
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(16)
+        .frame(width: 240)
+    }
+}
+
+struct ColorPalettePicker: View {
+    @Binding var hex: String
+    var highlighter: Bool
+
+    static let pens = ["#1F2328", "#495057", "#868E96", "#FFFFFF", "#1C64F2", "#4DABF7", "#0C8599", "#2F9E44",
+                       "#82C91E", "#F2C200", "#F76707", "#E03131", "#D6336C", "#AE3EC9", "#7048E8", "#5C3D2E"]
+    static let highlighters = ["#FFE066", "#FFD43B", "#8CE99A", "#69DB7C", "#74C0FC", "#A5D8FF", "#FFA8A8", "#FFC9C9",
+                               "#D0BFFF", "#E599F7", "#FFC078", "#C3FAE8"]
+
+    var body: some View {
+        let swatches = highlighter ? ColorPalettePicker.highlighters : ColorPalettePicker.pens
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Colour").font(.headline)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: 10), count: 6), spacing: 10) {
+                ForEach(swatches, id: \.self) { s in
+                    Button {
+                        hex = s
+                    } label: {
+                        Circle().fill(Color(hex: s))
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.15)))
+                            .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: s.uppercased() == hex.uppercased() ? 3 : 0).padding(-4))
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            ColorPicker("Custom", selection: Binding(get: { Color(hex: hex) }, set: { hex = UIColor($0).hexString }), supportsOpacity: false)
+        }
+        .padding(16)
+        .frame(width: 280)
+    }
+}
+
+struct WidthEditor: View {
+    @Binding var width: CGFloat
+    var range: ClosedRange<CGFloat>
+    var colorHex: String
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("Thickness").font(.headline)
+            Capsule().fill(Color(hex: colorHex)).frame(width: 160, height: max(1, width))
+                .frame(height: 44)
+            Slider(value: $width, in: range)
+            Text(String(format: "%.1f pt", width)).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(width: 240)
+    }
+}

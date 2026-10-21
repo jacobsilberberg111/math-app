@@ -1,0 +1,948 @@
+import UIKit
+import PencilKit
+
+struct ToolInputError: Error {
+    let message: String
+}
+
+/// Typed access to a tool call's JSON input.
+struct ToolArgs {
+    let json: JSONValue
+
+    func double(_ k: String) -> Double? { json[k]?.doubleValue }
+    func cg(_ k: String) -> CGFloat? { double(k).map { CGFloat($0) } }
+    func int(_ k: String) -> Int? { json[k]?.intValue }
+    func string(_ k: String) -> String? {
+        guard let s = json[k]?.stringValue?.trimmed, !s.isEmpty else { return nil }
+        return s
+    }
+    func bool(_ k: String) -> Bool? { json[k]?.boolValue }
+    func array(_ k: String) -> [JSONValue] { json[k]?.arrayValue ?? [] }
+
+    func requireString(_ k: String) throws -> String {
+        guard let s = json[k]?.stringValue, !s.trimmed.isEmpty else { throw ToolInputError(message: "Missing '\(k)'.") }
+        return s
+    }
+
+    func requireDouble(_ k: String) throws -> Double {
+        guard let d = double(k), d.isFinite else { throw ToolInputError(message: "Missing or invalid number '\(k)'.") }
+        return d
+    }
+}
+
+/// Applies the tutor's tool calls to the note, records them for "undo this turn", and returns a
+/// compact result string the tutor can use to plan its next move.
+@MainActor
+final class CanvasActionExecutor {
+    struct Outcome {
+        var result: String
+        var isError: Bool
+        var action: ChatAction?
+    }
+
+    let document: NoteDocument
+    weak var canvas: NoteCanvasViewController?
+    let memory: TutorMemoryStore
+    /// Edits from completed responses in this turn, and from the response currently streaming
+    /// (kept apart so a mid-response model fallback can undo just the declined attempt).
+    private var turnRecord = TurnRecord()
+    private var responseRecord = TurnRecord()
+    var record: TurnRecord {
+        get {
+            var r = turnRecord
+            r.merge(responseRecord)
+            return r
+        }
+        set {
+            turnRecord = newValue
+            responseRecord = TurnRecord()
+        }
+    }
+    /// tool_use id -> element being written live.
+    private var liveElements: [String: String] = [:]
+    private var liveFrames: [String: CGRect] = [:]
+
+    init(document: NoteDocument, memory: TutorMemoryStore) {
+        self.document = document
+        self.memory = memory
+    }
+
+    var settings: AppSettings { .shared }
+    var layout: LayoutAssistant { LayoutAssistant(doc: document) }
+    var env: RenderEnvironment { PageRenderer.environment(for: document) }
+    var pageWidth: CGFloat { document.pageSize.width }
+    var pageHeight: CGFloat { document.pageSize.height }
+
+    func beginTurn() {
+        turnRecord = TurnRecord()
+        responseRecord = TurnRecord()
+        liveElements.removeAll()
+        liveFrames.removeAll()
+    }
+
+    func beginResponse() {
+        turnRecord.merge(responseRecord)
+        responseRecord = TurnRecord()
+    }
+
+    func endResponse() {
+        turnRecord.merge(responseRecord)
+        responseRecord = TurnRecord()
+    }
+
+    /// Undoes only what the response currently streaming has done.
+    func revertResponse() {
+        CanvasActionExecutor.revert(responseRecord, in: document)
+        responseRecord = TurnRecord()
+        liveElements.removeAll()
+        liveFrames.removeAll()
+    }
+
+    // MARK: Recording
+
+    private func noteCreated(_ id: String) { responseRecord.created.append(id) }
+
+    private func noteModified(_ e: CanvasElement) {
+        let known = responseRecord.originals[e.id] != nil || responseRecord.created.contains(e.id)
+            || turnRecord.originals[e.id] != nil || turnRecord.created.contains(e.id)
+        if !known { responseRecord.originals[e.id] = e }
+    }
+
+    private func noteRemoved(_ e: CanvasElement) {
+        if let i = responseRecord.created.firstIndex(of: e.id) {
+            responseRecord.created.remove(at: i)
+        } else if let i = turnRecord.created.firstIndex(of: e.id) {
+            turnRecord.created.remove(at: i)
+        } else {
+            responseRecord.removed.append(responseRecord.originals[e.id] ?? turnRecord.originals[e.id] ?? e)
+        }
+    }
+
+    /// Reverts everything a turn did.
+    static func revert(_ r: TurnRecord, in doc: NoteDocument) {
+        for id in r.created { doc.remove(id, actionName: "Undo Tutor") }
+        for (_, original) in r.originals { doc.restore(original) }
+        for e in r.removed { doc.restore(e) }
+        if let d = r.drawingBefore { doc.replaceDrawing(d, actionName: "Undo Tutor") }
+    }
+
+    // MARK: Helpers
+
+    func resolvePage(_ n: Int?) throws -> Int {
+        guard let n else { return canvas?.currentPageIndex ?? 0 }
+        let count = document.content.pages.count
+        if n >= 1 && n <= count { return n - 1 }
+        if n == count + 1 {
+            document.appendPage()
+            return count
+        }
+        throw ToolInputError(message: "Page \(n) doesn't exist (the note has \(count) page\(count == 1 ? "" : "s"); use \(count + 1) to add one).")
+    }
+
+    func color(_ name: String?, default fallback: String? = nil) -> String {
+        InkPalette.hex(for: name, default: fallback ?? settings.tutorInkHex)
+    }
+
+    func textSize(_ s: String?, style: TextStyle) -> CGFloat {
+        let base: CGFloat
+        switch s {
+        case "small": base = 16
+        case "large": base = 27
+        default: base = 20
+        }
+        switch style {
+        case .heading: return base + 7
+        case .note: return base - 2
+        default: return base
+        }
+    }
+
+    func mathSize(_ s: String?) -> CGFloat {
+        switch s {
+        case "small": return 18
+        case "large": return 30
+        default: return 23
+        }
+    }
+
+    func describe(_ r: CGRect) -> String { r.roundedForDisplay }
+
+    func element(_ id: String) throws -> CanvasElement {
+        guard let e = document.element(id) else { throw ToolInputError(message: "No element with id \(id).") }
+        return e
+    }
+
+    func question(number: Int) -> CanvasElement? {
+        document.content.elements.last { e in
+            if case .question(let q) = e.kind { return q.number == number }
+            return false
+        }
+    }
+
+    /// Adds a tutor element with the writing reveal.
+    @discardableResult
+    func addTutorElement(page: Int, frame: CGRect, kind: ElementKind, reveal: Bool = true) -> CanvasElement {
+        let e = CanvasElement(id: document.nextElementID(), pageIndex: page, frame: frame, author: .tutor, kind: kind)
+        document.add(e, reveal: reveal ? .write(duration: ElementRenderer.revealDuration(e)) : .none, actionName: "Tutor")
+        noteCreated(e.id)
+        return e
+    }
+
+    func points(_ value: JSONValue?) -> [CGPoint] {
+        (value?.arrayValue ?? []).compactMap { p -> CGPoint? in
+            if let arr = p.arrayValue, arr.count >= 2, let x = arr[0].doubleValue, let y = arr[1].doubleValue {
+                return CGPoint(x: x, y: y)
+            }
+            if let x = p["x"]?.doubleValue, let y = p["y"]?.doubleValue { return CGPoint(x: x, y: y) }
+            return nil
+        }
+    }
+
+    /// Builds an ink element from page-coordinate strokes.
+    func inkElement(page: Int, strokes: [[CGPoint]], colorHex: String, width: CGFloat, purpose: InkPurpose,
+                    opacity: CGFloat = 1, closed: [Bool]? = nil, label: String? = nil, labelAt: CGPoint? = nil) -> CanvasElement? {
+        let all = strokes.flatMap { $0 }
+        guard !all.isEmpty else { return nil }
+        var bounds = ShapeGeometry.bounds(all).insetBy(dx: -width - 2, dy: -width - 2)
+        var labelOffset: CGPoint?
+        if let label, !label.isEmpty {
+            let f = NoteFonts.tutorFont(style: .handwriting, size: max(15, width * 5.5), hand: settings.tutorHand)
+            let l = ElementRenderer.richLayout(label, font: f, width: 260, rich: true)
+            var origin = labelAt ?? CGPoint(x: bounds.maxX + 6, y: bounds.midY - l.size.height / 2)
+            if origin.x + l.size.width > pageWidth - 8 { origin.x = max(8, bounds.minX - l.size.width - 8) }
+            let labelRect = CGRect(origin: origin, size: l.size)
+            bounds = bounds.union(labelRect.insetBy(dx: -2, dy: -2))
+            labelOffset = CGPoint(x: origin.x - bounds.minX, y: origin.y - bounds.minY)
+        }
+        let rel = strokes.enumerated().map { (i, s) in
+            InkStroke(points: s.map { CGPoint(x: $0.x - bounds.minX, y: $0.y - bounds.minY) }, closed: closed?[safe: i] ?? false)
+        }
+        let ink = InkContent(strokes: rel, colorHex: colorHex, width: width, opacity: opacity, purpose: purpose, label: label, labelOffset: labelOffset)
+        return CanvasElement(id: document.nextElementID(), pageIndex: page, frame: bounds, author: .tutor, kind: .ink(ink))
+    }
+
+    @discardableResult
+    func addInk(_ e: CanvasElement) -> CanvasElement {
+        document.add(e, reveal: .write(duration: ElementRenderer.revealDuration(e)), actionName: "Tutor")
+        noteCreated(e.id)
+        return e
+    }
+
+    // MARK: Live preview (eager input streaming)
+
+    /// Called as tool input streams in, so writing appears on the page while it's generated.
+    func preview(toolID: String, name: String, partial: JSONValue, raw: String) {
+        guard TutorTools.liveTools.contains(name) else { return }
+        let args = ToolArgs(json: partial)
+        do {
+            switch name {
+            case "write":
+                guard let text = partial["text"]?.stringValue, !text.isEmpty, args.double("y") != nil else { return }
+                let content = try writeContent(args, text: text)
+                if let id = liveElements[toolID], var frame = liveFrames[toolID] {
+                    let h = ElementRenderer.measureText(content, author: .tutor, width: frame.width, env: env).height
+                    frame.size.height = h
+                    document.update(id, registerUndo: false) {
+                        $0.kind = .text(content)
+                        $0.frame = frame
+                    }
+                } else {
+                    let page = try resolvePage(args.int("page"))
+                    var frame = try writeFrame(args, content: content, fitted: false)
+                    frame = layout.place(frame, page: page).rect
+                    let e = CanvasElement(id: document.nextElementID(), pageIndex: page, frame: frame, author: .tutor, kind: .text(content))
+                    document.add(e, reveal: .live, actionName: "Tutor")
+                    noteCreated(e.id)
+                    liveElements[toolID] = e.id
+                    liveFrames[toolID] = frame
+                }
+            case "write_math":
+                let lines = (partial["lines"]?.arrayValue ?? []).compactMap(\.stringValue).filter { !$0.isEmpty }
+                guard !lines.isEmpty, args.double("y") != nil else { return }
+                // Only show complete lines while streaming (a half line of LaTeX looks broken).
+                let lastChar = raw.trimmingCharacters(in: .whitespacesAndNewlines).last
+                let lastIsComplete = lastChar == "," || lastChar == "]" || lastChar == "}"
+                let complete = lastIsComplete ? lines : Array(lines.dropLast())
+                guard !complete.isEmpty else { return }
+                let content = MathContent(lines: complete, fontSize: mathSize(args.string("size")), colorHex: color(args.string("color")))
+                let size = ElementRenderer.measureMath(content)
+                if let id = liveElements[toolID], var frame = liveFrames[toolID] {
+                    frame.size = size
+                    document.update(id, registerUndo: false) {
+                        $0.kind = .math(content)
+                        $0.frame = frame
+                    }
+                    liveFrames[toolID] = frame
+                } else {
+                    let page = try resolvePage(args.int("page"))
+                    let x = args.cg("x") ?? 60, y = args.cg("y") ?? 60
+                    let frame = layout.place(CGRect(x: x, y: y, width: max(size.width, 200), height: size.height), page: page).rect
+                    let placed = CGRect(origin: frame.origin, size: size)
+                    let e = CanvasElement(id: document.nextElementID(), pageIndex: page, frame: placed, author: .tutor, kind: .math(content))
+                    document.add(e, reveal: .live, actionName: "Tutor")
+                    noteCreated(e.id)
+                    liveElements[toolID] = e.id
+                    liveFrames[toolID] = placed
+                }
+            default:
+                break
+            }
+        } catch {
+            // Partial input may be temporarily invalid; ignore until complete.
+        }
+    }
+
+    /// Removes a live element whose tool call turned out to be invalid.
+    func discardLive(toolID: String) {
+        if let id = liveElements[toolID] {
+            document.remove(id)
+            responseRecord.created.removeAll { $0 == id }
+        }
+        liveElements[toolID] = nil
+        liveFrames[toolID] = nil
+    }
+
+    private func writeContent(_ args: ToolArgs, text: String) throws -> TextContent {
+        let style = TextStyle(rawValue: args.string("style") ?? "handwriting") ?? .handwriting
+        return TextContent(text: text, style: style, fontSize: textSize(args.string("size"), style: style),
+                           colorHex: color(args.string("color")), rich: true)
+    }
+
+    private func writeFrame(_ args: ToolArgs, content: TextContent, fitted: Bool) throws -> CGRect {
+        var x = args.cg("x") ?? 60
+        let y = args.cg("y") ?? 60
+        var width = min(736, max(80, args.cg("width") ?? 360))
+        if x + width > pageWidth - 12 {
+            let shrunk = pageWidth - 12 - x
+            if shrunk >= 160 { width = shrunk } else { x = max(12, pageWidth - 12 - width) }
+        }
+        if fitted { width = ElementRenderer.fittedTextWidth(content, author: .tutor, maxWidth: width, env: env) }
+        let h = ElementRenderer.measureText(content, author: .tutor, width: width, env: env).height
+        return CGRect(x: x, y: y, width: width, height: h)
+    }
+
+    // MARK: Execute
+
+    func execute(toolID: String, name: String, input: JSONValue) -> Outcome {
+        let args = ToolArgs(json: input)
+        do {
+            switch name {
+            case "write": return try write(toolID: toolID, args)
+            case "write_math": return try writeMath(toolID: toolID, args)
+            case "draw": return try draw(args)
+            case "annotate": return try annotate(args)
+            case "graph": return try graph(args)
+            case "number_line": return try numberLine(args)
+            case "table": return try table(args)
+            case "add_question": return try addQuestion(args)
+            case "mark": return try mark(args)
+            case "move": return try move(args)
+            case "edit": return try edit(args)
+            case "delete": return try delete(args)
+            case "erase_ink": return try eraseInk(args)
+            case "add_page": return try addPage(args)
+            case "focus": return try focus(args)
+            case "clear_marks": return try clearMarks(args)
+            case "remember": return try remember(args)
+            default:
+                return Outcome(result: "Unknown tool \(name).", isError: true, action: nil)
+            }
+        } catch let e as ToolInputError {
+            discardLive(toolID: toolID)
+            return Outcome(result: e.message, isError: true, action: nil)
+        } catch {
+            discardLive(toolID: toolID)
+            return Outcome(result: "Failed: \(error.localizedDescription)", isError: true, action: nil)
+        }
+    }
+
+    private func write(toolID: String, _ args: ToolArgs) throws -> Outcome {
+        let text = try args.requireString("text")
+        let content = try writeContent(args, text: text)
+        if let id = liveElements[toolID], let start = liveFrames[toolID] {
+            let fittedWidth = ElementRenderer.fittedTextWidth(content, author: .tutor, maxWidth: start.width, env: env)
+            let h = ElementRenderer.measureText(content, author: .tutor, width: fittedWidth, env: env).height
+            let frame = CGRect(x: start.minX, y: start.minY, width: fittedWidth, height: h)
+            document.update(id, registerUndo: false) {
+                $0.kind = .text(content)
+                $0.frame = frame
+            }
+            canvas?.finishLive(id)
+            liveElements[toolID] = nil
+            let page = document.element(id)?.pageIndex ?? 0
+            return Outcome(result: "Wrote \(id) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY))).", isError: false,
+                           action: ChatAction(symbol: "pencil.line", summary: "Wrote on p.\(page + 1)", elementIDs: [id], page: page))
+        }
+        let page = try resolvePage(args.int("page"))
+        let requested = try writeFrame(args, content: content, fitted: true)
+        let (frame, nudged) = layout.place(requested, page: page)
+        let e = addTutorElement(page: page, frame: frame, kind: .text(content))
+        var result = "Wrote \(e.id) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY)))."
+        if nudged { result += " Moved from y=\(Int(requested.minY)) to avoid overlapping existing content." }
+        return Outcome(result: result, isError: false,
+                       action: ChatAction(symbol: "pencil.line", summary: "Wrote on p.\(page + 1)", elementIDs: [e.id], page: page))
+    }
+
+    private func writeMath(toolID: String, _ args: ToolArgs) throws -> Outcome {
+        let lines = args.array("lines").compactMap(\.stringValue).filter { !$0.trimmed.isEmpty }
+        guard !lines.isEmpty else { throw ToolInputError(message: "Provide at least one line of LaTeX in 'lines'.") }
+        let content = MathContent(lines: lines, fontSize: mathSize(args.string("size")), colorHex: color(args.string("color")))
+        let size = ElementRenderer.measureMath(content)
+        if let id = liveElements[toolID], let start = liveFrames[toolID] {
+            let frame = CGRect(origin: start.origin, size: size)
+            document.update(id, registerUndo: false) {
+                $0.kind = .math(content)
+                $0.frame = frame
+            }
+            canvas?.finishLive(id)
+            liveElements[toolID] = nil
+            let page = document.element(id)?.pageIndex ?? 0
+            return Outcome(result: "Wrote math \(id) (\(lines.count) line\(lines.count == 1 ? "" : "s")) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY))).",
+                           isError: false, action: ChatAction(symbol: "function", summary: "Worked math on p.\(page + 1)", elementIDs: [id], page: page))
+        }
+        let page = try resolvePage(args.int("page"))
+        let requested = CGRect(x: args.cg("x") ?? 60, y: args.cg("y") ?? 60, width: size.width, height: size.height)
+        let (frame, nudged) = layout.place(requested, page: page)
+        let e = addTutorElement(page: page, frame: frame, kind: .math(content))
+        var result = "Wrote math \(e.id) on page \(page + 1) at \(describe(frame)) (bottom y=\(Int(frame.maxY)))."
+        if nudged { result += " Moved to avoid overlapping existing content." }
+        return Outcome(result: result, isError: false,
+                       action: ChatAction(symbol: "function", summary: "Worked math on p.\(page + 1)", elementIDs: [e.id], page: page))
+    }
+
+    private func draw(_ args: ToolArgs) throws -> Outcome {
+        let page = try resolvePage(args.int("page"))
+        let strokesJSON = args.array("strokes")
+        var strokes: [[CGPoint]] = []
+        var closed: [Bool] = []
+        var sharp = false
+        for s in strokesJSON {
+            let pts = points(s["points"])
+            guard pts.count >= 2 else { continue }
+            strokes.append(pts)
+            closed.append(s["closed"]?.boolValue ?? false)
+            if s["sharp"]?.boolValue == true { sharp = true }
+        }
+        guard !strokes.isEmpty else { throw ToolInputError(message: "Each stroke needs at least two [x, y] points.") }
+        let isHighlighter = args.string("style") == "highlighter"
+        let width = CGFloat(min(30, max(0.8, args.double("width") ?? (isHighlighter ? 14 : 2.5))))
+        let hex = color(args.string("color"), default: isHighlighter ? InkPalette.highlighterYellow : nil)
+        if sharp {
+            // Polygons: close by repeating the first point and skip smoothing via the box purpose.
+            strokes = strokes.enumerated().map { (i, s) in closed[i] ? s + [s[0]] : s }
+        }
+        guard let e = inkElement(page: page, strokes: strokes, colorHex: hex, width: width,
+                                 purpose: isHighlighter ? .highlight : (sharp ? .box : .freehand),
+                                 opacity: isHighlighter ? 0.38 : 1, closed: sharp ? nil : closed) else {
+            throw ToolInputError(message: "Nothing to draw.")
+        }
+        addInk(e)
+        var ids = [e.id]
+        for l in args.array("labels") {
+            guard let x = l["x"]?.doubleValue, let y = l["y"]?.doubleValue, let text = l["text"]?.stringValue, !text.isEmpty else { continue }
+            let content = TextContent(text: text, style: .handwriting, fontSize: 17, colorHex: hex, rich: true)
+            let w = ElementRenderer.fittedTextWidth(content, author: .tutor, maxWidth: 220, env: env)
+            let h = ElementRenderer.measureText(content, author: .tutor, width: w, env: env).height
+            let label = addTutorElement(page: page, frame: CGRect(x: x - w / 2, y: y - h / 2, width: w, height: h), kind: .text(content))
+            ids.append(label.id)
+        }
+        return Outcome(result: "Drew \(e.id) (\(strokes.count) stroke\(strokes.count == 1 ? "" : "s")) on page \(page + 1) covering \(describe(e.frame))" + (ids.count > 1 ? "; labels \(ids.dropFirst().joined(separator: ", "))." : "."),
+                       isError: false, action: ChatAction(symbol: "scribble", summary: "Drew on p.\(page + 1)", elementIDs: ids, page: page))
+    }
+
+    private func annotate(_ args: ToolArgs) throws -> Outcome {
+        let page = try resolvePage(args.int("page"))
+        let markName = try args.requireString("mark")
+        let x = args.cg("x"), y = args.cg("y")
+        let w = args.cg("width") ?? 60, h = args.cg("height") ?? 30
+        let target = CGRect(x: x ?? 0, y: y ?? 0, width: max(4, w), height: max(4, h))
+        let label = args.string("label")
+        var strokes: [[CGPoint]]
+        var width: CGFloat = 2.6
+        var purpose: InkPurpose
+        var opacity: CGFloat = 1
+        var defaultColor = "red"
+        switch markName {
+        case "circle":
+            guard x != nil, y != nil else { throw ToolInputError(message: "circle needs x, y, width, height around the target.") }
+            strokes = HandDrawn.circle(around: target); purpose = .circle
+        case "underline":
+            guard x != nil, y != nil else { throw ToolInputError(message: "underline needs the target rectangle.") }
+            strokes = HandDrawn.underline(target); purpose = .underline
+        case "box":
+            guard x != nil, y != nil else { throw ToolInputError(message: "box needs the target rectangle.") }
+            strokes = HandDrawn.box(target); purpose = .box
+        case "strike":
+            guard x != nil, y != nil else { throw ToolInputError(message: "strike needs the target rectangle.") }
+            strokes = HandDrawn.strike(target); purpose = .strike
+        case "bracket":
+            guard x != nil, y != nil else { throw ToolInputError(message: "bracket needs the target rectangle.") }
+            strokes = HandDrawn.bracket(target); purpose = .bracket
+        case "highlight":
+            guard x != nil, y != nil else { throw ToolInputError(message: "highlight needs the target rectangle.") }
+            let hl = HandDrawn.highlight(target)
+            strokes = hl.strokes; width = hl.width; purpose = .highlight; opacity = 0.4; defaultColor = "yellow"
+        case "arrow":
+            let from = CGPoint(x: args.cg("from_x") ?? target.minX, y: args.cg("from_y") ?? target.minY)
+            guard let tx = args.cg("to_x"), let ty = args.cg("to_y") else { throw ToolInputError(message: "arrow needs to_x and to_y (and from_x, from_y).") }
+            strokes = HandDrawn.arrow(from: from, to: CGPoint(x: tx, y: ty)); purpose = .arrow; defaultColor = "blue"
+        case "tick":
+            strokes = HandDrawn.tick(at: target.origin, size: min(max(w, 24), 48)); purpose = .tick; defaultColor = "green"; width = 3
+        case "cross":
+            strokes = HandDrawn.cross(at: target.origin, size: min(max(w, 22), 42)); purpose = .cross; width = 3
+        case "question":
+            strokes = HandDrawn.question(at: target.origin); purpose = .question; defaultColor = "orange"
+        case "star":
+            strokes = HandDrawn.star(at: target.origin); purpose = .star; defaultColor = "orange"
+        default:
+            throw ToolInputError(message: "Unknown mark '\(markName)'.")
+        }
+        let hex = color(args.string("color"), default: InkPalette.hex(for: defaultColor, default: settings.tutorInkHex))
+        let resolvedHex = markName == "highlight" && args.string("color") == nil ? InkPalette.highlighterYellow : hex
+        guard let e = inkElement(page: page, strokes: strokes, colorHex: resolvedHex, width: width, purpose: purpose,
+                                 opacity: opacity, label: label) else { throw ToolInputError(message: "Nothing to draw.") }
+        addInk(e)
+        let verb: String
+        switch markName {
+        case "circle": verb = "Circled"
+        case "underline": verb = "Underlined"
+        case "tick": verb = "Ticked"
+        case "cross": verb = "Crossed"
+        case "highlight": verb = "Highlighted"
+        default: verb = markName.capitalized
+        }
+        let symbol = markName == "tick" ? "checkmark" : (markName == "cross" ? "xmark" : (markName == "arrow" ? "arrow.up.right" : "circle.dashed"))
+        return Outcome(result: "\(verb) on page \(page + 1) (\(e.id), \(describe(e.frame))).", isError: false,
+                       action: ChatAction(symbol: symbol, summary: "\(verb)\(label.map { ": \($0.truncated(28))" } ?? "")", elementIDs: [e.id], page: page))
+    }
+
+    private func graph(_ args: ToolArgs) throws -> Outcome {
+        var warnings: [String] = []
+        func functions() -> [GraphFunction] {
+            args.array("functions").compactMap { f in
+                guard let expr = f["expression"]?.stringValue, !expr.trimmed.isEmpty else { return nil }
+                do {
+                    _ = try ExpressionParser.parse(expr)
+                } catch {
+                    warnings.append("Couldn't parse '\(expr)': \(error)")
+                    return nil
+                }
+                return GraphFunction(expression: expr, label: f["label"]?.stringValue,
+                                     colorHex: color(f["color"]?.stringValue, default: GraphPalette.next(f["color"]?.stringValue, index: 0)),
+                                     dashed: f["dashed"]?.boolValue ?? false,
+                                     domainMin: f["domain_min"]?.doubleValue, domainMax: f["domain_max"]?.doubleValue)
+            }
+        }
+        let points = args.array("points").compactMap { p -> GraphPoint? in
+            guard let x = p["x"]?.doubleValue, let y = p["y"]?.doubleValue else { return nil }
+            return GraphPoint(x: x, y: y, label: p["label"]?.stringValue, colorHex: color(p["color"]?.stringValue, default: "#1F2328"), open: p["open"]?.boolValue ?? false)
+        }
+        let segments = args.array("segments").compactMap { s -> GraphSegment? in
+            guard let x1 = s["x1"]?.doubleValue, let y1 = s["y1"]?.doubleValue, let x2 = s["x2"]?.doubleValue, let y2 = s["y2"]?.doubleValue else { return nil }
+            return GraphSegment(x1: x1, y1: y1, x2: x2, y2: y2, colorHex: color(s["color"]?.stringValue, default: settings.tutorInkHex),
+                                dashed: s["dashed"]?.boolValue ?? false, arrow: s["arrow"]?.boolValue ?? false, label: s["label"]?.stringValue)
+        }
+        let guides = args.array("guides").compactMap { g -> GraphGuideLine? in
+            let gx = g["x"]?.doubleValue, gy = g["y"]?.doubleValue
+            guard gx != nil || gy != nil else { return nil }
+            return GraphGuideLine(x: gx, y: gy, colorHex: color(g["color"]?.stringValue, default: "#868E96"), dashed: true, label: g["label"]?.stringValue)
+        }
+        let shades = args.array("shade").compactMap { s -> GraphShading? in
+            guard let from = s["from"]?.doubleValue, let to = s["to"]?.doubleValue else { return nil }
+            return GraphShading(upper: s["upper"]?.stringValue, lower: s["lower"]?.stringValue, from: from, to: to,
+                                colorHex: color(s["color"]?.stringValue, default: "#1C64F2"))
+        }
+
+        if let gid = args.string("graph_id") {
+            let e = try element(gid)
+            guard case .graph(var g) = e.kind else { throw ToolInputError(message: "\(gid) is not a graph.") }
+            noteModified(e)
+            var fns = functions()
+            for i in fns.indices where args.array("functions")[safe: i]?["color"] == nil {
+                fns[i].colorHex = GraphPalette.color(at: g.functions.count + i)
+            }
+            g.functions += fns
+            g.points += points
+            g.segments += segments
+            g.guides += guides
+            g.shadings += shades
+            if let v = args.double("x_min") { g.xMin = v }
+            if let v = args.double("x_max") { g.xMax = v }
+            if let v = args.double("y_min") { g.yMin = v }
+            if let v = args.double("y_max") { g.yMax = v }
+            if let t = args.string("title") { g.title = t }
+            guard g.xMax > g.xMin, g.yMax > g.yMin else { throw ToolInputError(message: "Axis ranges must have max > min.") }
+            let updated = g
+            document.update(gid, actionName: "Tutor") { $0.kind = .graph(updated) }
+            canvas?.elementViews[gid]?.progress = 0
+            canvas?.enqueueReveal(elementID: gid, duration: 1.0)
+            let plot = ElementRenderer.graphPlotRect(e.frame, g)
+            var result = "Updated graph \(gid). " + plotMapping(g, plot: plot, page: e.pageIndex)
+            if !warnings.isEmpty { result += " Warnings: " + warnings.joined(separator: "; ") }
+            return Outcome(result: result, isError: false,
+                           action: ChatAction(symbol: "chart.xyaxis.line", summary: "Updated graph", elementIDs: [gid], page: e.pageIndex))
+        }
+
+        let page = try resolvePage(args.int("page"))
+        var g = GraphContent()
+        g.xMin = args.double("x_min") ?? -10
+        g.xMax = args.double("x_max") ?? 10
+        g.yMin = args.double("y_min") ?? -10
+        g.yMax = args.double("y_max") ?? 10
+        guard g.xMax > g.xMin, g.yMax > g.yMin else { throw ToolInputError(message: "Axis ranges must have max > min.") }
+        g.xStep = args.double("x_step").flatMap { $0 > 0 ? $0 : nil }
+        g.yStep = args.double("y_step").flatMap { $0 > 0 ? $0 : nil }
+        g.showGrid = args.bool("grid") ?? true
+        g.title = args.string("title")
+        g.xLabel = args.string("x_label") ?? "x"
+        g.yLabel = args.string("y_label") ?? "y"
+        var fns = functions()
+        for i in fns.indices where args.array("functions")[safe: i]?["color"] == nil {
+            fns[i].colorHex = GraphPalette.color(at: i)
+        }
+        g.functions = fns
+        g.points = points
+        g.segments = segments
+        g.guides = guides
+        g.shadings = shades
+        let w = min(pageWidth - 32, max(200, args.cg("width") ?? 440))
+        let h = min(pageHeight - 40, max(160, args.cg("height") ?? 340))
+        let requested = CGRect(x: args.cg("x") ?? (pageWidth - w) / 2, y: args.cg("y") ?? 80, width: w, height: h)
+        let (frame, nudged) = layout.place(requested, page: page)
+        let e = addTutorElement(page: page, frame: frame, kind: .graph(g))
+        let plot = ElementRenderer.graphPlotRect(frame, g)
+        var result = "Graph \(e.id) on page \(page + 1) at \(describe(frame))\(nudged ? " (moved to free space)" : ""). " + plotMapping(g, plot: plot, page: page)
+        if !warnings.isEmpty { result += " Warnings: " + warnings.joined(separator: "; ") }
+        return Outcome(result: result, isError: false,
+                       action: ChatAction(symbol: "chart.xyaxis.line", summary: "Graphed on p.\(page + 1)", elementIDs: [e.id], page: page))
+    }
+
+    private func plotMapping(_ g: GraphContent, plot: CGRect, page: Int) -> String {
+        "Plot area: x∈[\(JSONValue.formatNumber(g.xMin)), \(JSONValue.formatNumber(g.xMax))] spans page x \(Int(plot.minX))–\(Int(plot.maxX)); y∈[\(JSONValue.formatNumber(g.yMin)), \(JSONValue.formatNumber(g.yMax))] spans page y \(Int(plot.maxY))–\(Int(plot.minY)) (y up)."
+    }
+
+    private func numberLine(_ args: ToolArgs) throws -> Outcome {
+        let page = try resolvePage(args.int("page"))
+        let minV = try args.requireDouble("min"), maxV = try args.requireDouble("max")
+        guard maxV > minV else { throw ToolInputError(message: "max must be greater than min.") }
+        var step = args.double("step") ?? 1
+        if step <= 0 || (maxV - minV) / step > 60 { step = ElementRenderer.niceStep(maxV - minV, targetTicks: 12) }
+        let lineColor = color(args.string("color"), default: "#1F2328")
+        var n = NumberLineContent(min: minV, max: maxV, step: step, labelEvery: max(1, args.int("label_every") ?? 1), colorHex: lineColor)
+        n.points = args.array("points").compactMap { p in
+            guard let v = p["value"]?.doubleValue else { return nil }
+            return NumberLinePoint(value: v, label: p["label"]?.stringValue, open: p["open"]?.boolValue ?? false,
+                                   colorHex: color(p["color"]?.stringValue))
+        }
+        n.intervals = args.array("intervals").map { i in
+            NumberLineInterval(from: i["from"]?.doubleValue, to: i["to"]?.doubleValue,
+                               openStart: i["open_start"]?.boolValue ?? false, openEnd: i["open_end"]?.boolValue ?? false,
+                               colorHex: color(i["color"]?.stringValue))
+        }
+        let w = min(pageWidth - 32, max(200, args.cg("width") ?? 520))
+        let requested = CGRect(x: args.cg("x") ?? (pageWidth - w) / 2, y: args.cg("y") ?? 100, width: w, height: 84)
+        let (frame, _) = layout.place(requested, page: page)
+        let e = addTutorElement(page: page, frame: frame, kind: .numberLine(n))
+        return Outcome(result: "Number line \(e.id) on page \(page + 1) at \(describe(frame)); value v sits at page x = \(Int(frame.minX + 16)) + (v − \(JSONValue.formatNumber(minV)))·\(String(format: "%.1f", (frame.width - 32) / CGFloat(maxV - minV))).",
+                       isError: false, action: ChatAction(symbol: "ruler", summary: "Number line on p.\(page + 1)", elementIDs: [e.id], page: page))
+    }
+
+    private func table(_ args: ToolArgs) throws -> Outcome {
+        let page = try resolvePage(args.int("page"))
+        let rows = args.array("rows").map { row in (row.arrayValue ?? []).map { $0.stringValue ?? ($0.doubleValue.map(JSONValue.formatNumber) ?? "") } }
+        guard !rows.isEmpty, rows.contains(where: { !$0.isEmpty }) else { throw ToolInputError(message: "rows must contain at least one row of cells.") }
+        let t = TableContent(rows: rows, header: args.bool("header") ?? true)
+        let maxW = min(pageWidth - 32, args.cg("width") ?? 640)
+        let size = ElementRenderer.tableSize(t, maxWidth: maxW)
+        let requested = CGRect(x: args.cg("x") ?? (pageWidth - size.width) / 2, y: args.cg("y") ?? 100, width: size.width, height: size.height)
+        let (frame, _) = layout.place(requested, page: page)
+        let e = addTutorElement(page: page, frame: frame, kind: .table(t))
+        return Outcome(result: "Table \(e.id) on page \(page + 1) at \(describe(frame)).", isError: false,
+                       action: ChatAction(symbol: "tablecells", summary: "Table on p.\(page + 1)", elementIDs: [e.id], page: page))
+    }
+
+    private func addQuestion(_ args: ToolArgs) throws -> Outcome {
+        let prompt = try args.requireString("prompt")
+        let answer = try args.requireString("answer")
+        let solution = args.string("solution") ?? answer
+        var q = QuestionContent(number: 0, prompt: prompt, marks: max(1, args.int("marks") ?? 1), promptHeight: 0,
+                                answer: answer, solution: solution, hint: args.string("hint"), topic: args.string("topic"),
+                                difficulty: args.string("difficulty"))
+        let width = pageWidth - 80
+        q.promptHeight = ElementRenderer.questionPromptHeight(q, width: width, env: env)
+        let answerSpace = min(560, max(100, args.cg("answer_space") ?? 200))
+        let height = q.promptHeight + answerSpace + 14
+
+        var page: Int
+        var y: CGFloat
+        if args.bool("new_page") == true {
+            document.appendPage()
+            page = document.content.pages.count - 1
+            y = 50
+        } else if let p = args.int("page") {
+            page = try resolvePage(p)
+            y = args.cg("y") ?? (layout.nextFreeY(page: page, height: height) ?? 50)
+        } else {
+            // Continue after the last question if there is one, otherwise on the current page.
+            let lastQuestionPage = document.content.elements.filter { if case .question = $0.kind { return true }; return false }.map(\.pageIndex).max()
+            page = lastQuestionPage ?? (canvas?.currentPageIndex ?? 0)
+            if let free = layout.nextFreeY(page: page, height: height) {
+                y = free
+            } else if page + 1 < document.content.pages.count, let free = layout.nextFreeY(page: page + 1, height: height) {
+                page += 1
+                y = free
+            } else {
+                document.appendPage()
+                page = document.content.pages.count - 1
+                y = 50
+            }
+        }
+        if y + height > pageHeight - 20 {
+            document.appendPage()
+            page = document.content.pages.count - 1
+            y = 50
+        }
+        q.number = document.nextQuestionNumber()
+        let frame = CGRect(x: 40, y: y, width: width, height: height)
+        let e = addTutorElement(page: page, frame: frame, kind: .question(q))
+        let answerArea = CGRect(x: frame.minX + 14, y: frame.minY + q.promptHeight, width: frame.width - 28, height: answerSpace)
+        return Outcome(result: "Added Q\(q.number) (\(e.id)) on page \(page + 1) at \(describe(frame)); answer area \(describe(answerArea)).",
+                       isError: false, action: ChatAction(symbol: "questionmark.square", summary: "Question \(q.number)", elementIDs: [e.id], page: page))
+    }
+
+    private func mark(_ args: ToolArgs) throws -> Outcome {
+        let verdictRaw = try args.requireString("verdict")
+        guard let verdict = QuestionStatus(rawValue: verdictRaw), verdict != .open else {
+            throw ToolInputError(message: "verdict must be correct, incorrect or partial.")
+        }
+        let comment = args.string("comment")
+        let score = args.string("score")
+        let markColor = verdict == .correct ? InkPalette.named["green"]! : (verdict == .incorrect ? InkPalette.named["red"]! : InkPalette.named["orange"]!)
+        var page: Int
+        var markOrigin: CGPoint
+        var commentRect: CGRect?
+        var ids: [String] = []
+        var summary: String
+
+        if let number = args.int("question") {
+            guard let qe = question(number: number), case .question(var q) = qe.kind else {
+                throw ToolInputError(message: "There is no Q\(number).")
+            }
+            page = qe.pageIndex
+            let answerArea = CGRect(x: qe.frame.minX + 14, y: qe.frame.minY + q.promptHeight, width: qe.frame.width - 28,
+                                    height: qe.frame.height - q.promptHeight - 14)
+            if let x = args.cg("x"), let y = args.cg("y") {
+                markOrigin = CGPoint(x: x, y: y)
+            } else {
+                markOrigin = CGPoint(x: answerArea.maxX - 58, y: answerArea.minY + 12)
+            }
+            noteModified(qe)
+            q.status = verdict
+            q.score = score ?? (verdict == .correct ? "\(q.marks)/\(q.marks)" : (verdict == .incorrect ? "0/\(q.marks)" : nil))
+            q.feedback = comment
+            let updated = q
+            document.update(qe.id, actionName: "Mark") { $0.kind = .question(updated) }
+            if comment != nil {
+                commentRect = CGRect(x: answerArea.maxX - 300, y: markOrigin.y + 44, width: 290, height: 40)
+            }
+            summary = "Marked Q\(number) \(verdict.rawValue)\(q.score.map { " (\($0))" } ?? "")"
+        } else {
+            page = try resolvePage(args.int("page"))
+            guard let x = args.cg("x"), let y = args.cg("y") else {
+                throw ToolInputError(message: "Give question (number) or page, x and y for the mark.")
+            }
+            markOrigin = CGPoint(x: x, y: y)
+            if comment != nil {
+                commentRect = CGRect(x: x + 48, y: y, width: min(280, pageWidth - x - 60), height: 40)
+            }
+            summary = "Marked \(verdict.rawValue)"
+        }
+
+        let strokes: [[CGPoint]]
+        switch verdict {
+        case .correct: strokes = HandDrawn.tick(at: markOrigin)
+        case .incorrect: strokes = HandDrawn.cross(at: markOrigin)
+        default: strokes = HandDrawn.partial(at: markOrigin)
+        }
+        let scoreLabel = args.int("question") != nil ? score : nil
+        if let e = inkElement(page: page, strokes: strokes, colorHex: markColor, width: 3.2, purpose: verdict == .correct ? .tick : (verdict == .incorrect ? .cross : .partial),
+                              label: scoreLabel) {
+            addInk(e)
+            ids.append(e.id)
+        }
+        if let comment, var rect = commentRect {
+            let content = TextContent(text: comment, style: .handwriting, fontSize: 18, colorHex: markColor, rich: true)
+            rect.size.width = max(140, min(rect.width, pageWidth - rect.minX - 12))
+            let w = ElementRenderer.fittedTextWidth(content, author: .tutor, maxWidth: rect.width, env: env)
+            let h = ElementRenderer.measureText(content, author: .tutor, width: w, env: env).height
+            let requested = CGRect(x: rect.maxX - w, y: rect.minY, width: w, height: h)
+            let (frame, _) = layout.place(requested, page: page)
+            let c = addTutorElement(page: page, frame: frame, kind: .text(content))
+            ids.append(c.id)
+        }
+        if settings.speakFeedback, let comment {
+            TutorVoice.shared.speak(RichTextParser.plainText(comment))
+        }
+        Haptics.success()
+        return Outcome(result: summary + " — " + (ids.isEmpty ? "no marks drawn" : "drew \(ids.joined(separator: ", "))") + ".",
+                       isError: false,
+                       action: ChatAction(symbol: verdict == .correct ? "checkmark.circle.fill" : (verdict == .incorrect ? "xmark.circle.fill" : "circle.lefthalf.filled"),
+                                          summary: summary, elementIDs: ids, page: page))
+    }
+
+    private func move(_ args: ToolArgs) throws -> Outcome {
+        let id = try args.requireString("element_id")
+        let e = try element(id)
+        let page = try args.int("page").map { try resolvePage($0) } ?? e.pageIndex
+        let x = try args.requireDouble("x"), y = try args.requireDouble("y")
+        noteModified(e)
+        let frame = layout.clamp(CGRect(x: x, y: y, width: e.frame.width, height: e.frame.height))
+        document.update(id, actionName: "Move") {
+            $0.pageIndex = page
+            $0.frame = frame
+        }
+        return Outcome(result: "Moved \(id) to page \(page + 1) at \(describe(frame)).", isError: false,
+                       action: ChatAction(symbol: "arrow.up.and.down.and.arrow.left.and.right", summary: "Moved an item", elementIDs: [id], page: page))
+    }
+
+    private func edit(_ args: ToolArgs) throws -> Outcome {
+        let id = try args.requireString("element_id")
+        let e = try element(id)
+        noteModified(e)
+        let newColor = args.string("color").map { color($0) }
+        switch e.kind {
+        case .text(var t):
+            if let text = args.json["text"]?.stringValue { t.text = text }
+            if let c = newColor { t.colorHex = c }
+            let h = ElementRenderer.measureText(t, author: e.author, width: e.frame.width, env: env).height
+            let updated = t
+            document.update(id, actionName: "Edit") {
+                $0.kind = .text(updated)
+                $0.frame.size.height = h
+            }
+        case .math(var m):
+            let lines = args.array("lines").compactMap(\.stringValue)
+            if !lines.isEmpty { m.lines = lines }
+            if let c = newColor { m.colorHex = c }
+            let size = ElementRenderer.measureMath(m)
+            let updated = m
+            document.update(id, actionName: "Edit") {
+                $0.kind = .math(updated)
+                $0.frame.size = size
+            }
+        case .question(var q):
+            if let text = args.json["text"]?.stringValue { q.prompt = text }
+            q.promptHeight = ElementRenderer.questionPromptHeight(q, width: e.frame.width, env: env)
+            let updated = q
+            document.update(id, actionName: "Edit") { $0.kind = .question(updated) }
+        case .ink(var ink):
+            if let c = newColor { ink.colorHex = c }
+            let updated = ink
+            document.update(id, actionName: "Edit") { $0.kind = .ink(updated) }
+        default:
+            throw ToolInputError(message: "\(id) (\(e.kind.typeName)) can't be edited this way.")
+        }
+        canvas?.elementViews[id]?.progress = 0
+        canvas?.enqueueReveal(elementID: id, duration: 0.5)
+        return Outcome(result: "Edited \(id).", isError: false,
+                       action: ChatAction(symbol: "pencil", summary: "Edited an item", elementIDs: [id], page: e.pageIndex))
+    }
+
+    private func delete(_ args: ToolArgs) throws -> Outcome {
+        let ids = args.array("element_ids").compactMap(\.stringValue)
+        guard !ids.isEmpty else { throw ToolInputError(message: "element_ids is empty.") }
+        var deleted: [String] = []
+        var missing: [String] = []
+        for id in ids {
+            guard let e = document.element(id) else { missing.append(id); continue }
+            noteRemoved(e)
+            document.remove(id, actionName: "Delete")
+            deleted.append(id)
+        }
+        var result = "Deleted \(deleted.joined(separator: ", "))."
+        if !missing.isEmpty { result += " Not found: \(missing.joined(separator: ", "))." }
+        return Outcome(result: result, isError: deleted.isEmpty, action: deleted.isEmpty ? nil : ChatAction(symbol: "trash", summary: "Removed \(deleted.count) item\(deleted.count == 1 ? "" : "s")"))
+    }
+
+    private func eraseInk(_ args: ToolArgs) throws -> Outcome {
+        let page = try resolvePage(args.int("page"))
+        let r = CGRect(x: try args.requireDouble("x"), y: try args.requireDouble("y"),
+                       width: try args.requireDouble("width"), height: try args.requireDouble("height"))
+        let docRect = document.docRect(r, page: page)
+        let before = document.drawing
+        var d = before
+        let count = d.strokes.count
+        d.strokes.removeAll { docRect.contains($0.renderBounds.center) }
+        let removed = count - d.strokes.count
+        guard removed > 0 else { return Outcome(result: "No ink found in that area.", isError: false, action: nil) }
+        if turnRecord.drawingBefore == nil && responseRecord.drawingBefore == nil { responseRecord.drawingBefore = before }
+        document.replaceDrawing(d, actionName: "Erase")
+        return Outcome(result: "Erased \(removed) stroke\(removed == 1 ? "" : "s") on page \(page + 1).", isError: false,
+                       action: ChatAction(symbol: "eraser", summary: "Erased ink on p.\(page + 1)", page: page))
+    }
+
+    private func addPage(_ args: ToolArgs) throws -> Outcome {
+        let paper: PaperStyle? = args.string("paper").map { name in
+            let pattern: PaperPattern
+            switch name {
+            case "blank": pattern = .blank
+            case "grid": pattern = .grid
+            case "dots": pattern = .dots
+            case "graph": pattern = .graph
+            default: pattern = .ruled
+            }
+            return PaperStyle(pattern: pattern, color: document.content.pages.last?.paper.color ?? .white)
+        }
+        let number: Int
+        if let after = args.int("after_page"), after >= 1, after < document.content.pages.count {
+            document.insertPage(after: after - 1, paper: paper)
+            number = after + 1
+        } else {
+            document.appendPage(paper: paper)
+            number = document.content.pages.count
+        }
+        return Outcome(result: "Added page \(number) (the note now has \(document.content.pages.count) pages).", isError: false,
+                       action: ChatAction(symbol: "doc.badge.plus", summary: "Added page \(number)", page: number - 1))
+    }
+
+    private func focus(_ args: ToolArgs) throws -> Outcome {
+        let page = try resolvePage(args.int("page"))
+        let r = CGRect(x: try args.requireDouble("x"), y: try args.requireDouble("y"),
+                       width: max(20, try args.requireDouble("width")), height: max(20, try args.requireDouble("height")))
+        canvas?.focus(docRect: document.docRect(r, page: page), message: args.string("message"))
+        return Outcome(result: "Showed the student page \(page + 1) \(describe(r)).", isError: false,
+                       action: ChatAction(symbol: "eye", summary: args.string("message")?.truncated(40) ?? "Look here", page: page))
+    }
+
+    private func clearMarks(_ args: ToolArgs) throws -> Outcome {
+        let page = try args.int("page").map { try resolvePage($0) }
+        let targets = document.content.elements.filter { e in
+            guard e.author == .tutor else { return false }
+            if case .question = e.kind { return false }
+            return page == nil || e.pageIndex == page
+        }
+        for e in targets {
+            noteRemoved(e)
+            document.remove(e.id, actionName: "Clear Marks")
+        }
+        return Outcome(result: "Removed \(targets.count) of your marks\(page.map { " from page \($0 + 1)" } ?? "").", isError: false,
+                       action: targets.isEmpty ? nil : ChatAction(symbol: "sparkles", summary: "Cleared \(targets.count) marks"))
+    }
+
+    private func remember(_ args: ToolArgs) throws -> Outcome {
+        let note = try args.requireString("note")
+        memory.add(note)
+        return Outcome(result: "Saved to memory.", isError: false, action: ChatAction(symbol: "brain", summary: "Remembered: \(note.truncated(40))"))
+    }
+}
+
+/// Distinct colours for multiple curves on one graph.
+enum GraphPalette {
+    static let colors = ["#1C64F2", "#E03131", "#2F9E44", "#7048E8", "#F76707", "#0C8599"]
+
+    static func color(at i: Int) -> String { colors[i % colors.count] }
+
+    static func next(_ requested: String?, index: Int) -> String {
+        requested.map { InkPalette.hex(for: $0, default: color(at: index)) } ?? color(at: index)
+    }
+}
