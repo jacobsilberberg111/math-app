@@ -66,7 +66,6 @@ struct NoteEditorView: View {
             EditorTopBar(model: model, onClose: close, onInsertPhoto: { showPhotoPicker = true },
                          onImportPDF: { showPDFImporter = true }, onExport: export, onScan: { showScanner = true },
                          onSwitchNote: onSwitchNote.map { open in { (meta: NoteMeta) in switchTo(meta, open) } })
-            EditorToolStrip(model: model)
             PaperBar(model: model)
             FindBar(find: model.find)
             HStack(spacing: 0) {

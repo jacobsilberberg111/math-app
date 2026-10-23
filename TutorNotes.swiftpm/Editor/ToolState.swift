@@ -18,6 +18,8 @@ final class ToolState {
     var eraserWidth: CGFloat = 20 { didSet { save() } }
     var rulerActive = false
     @ObservationIgnored var lastDrawingKind: CanvasToolKind = .pen
+    /// Colour slots shown in the toolbar for each tool; the palette holds everything else.
+    static let visibleColorSlots = 3
     @ObservationIgnored private var loading = false
 
     private struct Stored: Codable {
@@ -50,6 +52,16 @@ final class ToolState {
             highlighterWidthIndex = min(s.highlighterWidthIndex, s.highlighterWidths.count - 1)
             eraserMode = s.eraserMode
             eraserWidth = s.eraserWidth
+        }
+        // Earlier versions showed five colour slots: a colour in use beyond the third moves into it.
+        let last = ToolState.visibleColorSlots - 1
+        if penColorIndex > last, penColors.indices.contains(penColorIndex), penColors.count > last {
+            penColors[last] = penColors[penColorIndex]
+            penColorIndex = last
+        }
+        if highlighterColorIndex > last, highlighterColors.indices.contains(highlighterColorIndex), highlighterColors.count > last {
+            highlighterColors[last] = highlighterColors[highlighterColorIndex]
+            highlighterColorIndex = last
         }
         loading = false
     }

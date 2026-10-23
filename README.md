@@ -77,6 +77,7 @@ Any note with imported PDF pages can be turned into a past paper from the **+** 
 
 ## The notes side
 
+- **One-row toolbar:** back, title and undo; then the pen, highlighter, eraser, lasso and text tools with the tutor's **Ask** and **Hint**; then the current pen's three colour slots and thickness; then insert, record, **⋯ More** and the tutor. Tap the tool in use for its options (pen type, eraser kind). The **⋯** menu holds Pages, Find, Paper & Page Size, Export, and the Ruler, Snap Shapes and Draw with Finger switches. In narrow windows the colours fold into one button.
 - **PencilKit ink** with Apple's low-latency rendering and palm rejection. Pens: ballpoint, fountain, pencil, monoline, crayon, watercolor, plus highlighter, stroke/pixel eraser, lasso, ruler.
 - **Colours:** each tool keeps its own colour and width slots; tap a selected one to edit it. The palette has **favourites shared by every tool**, presets, a custom picker (with the system eyedropper), and an **Eyedropper** that picks a colour straight off the page.
 - **Lasso:** circle ink, typed text, tutor writing, images or cards to select them. Drag to move, use the corner handle to resize and the top handle to rotate (ink and marks; typed items and images stay upright). The bar recolours, changes thickness, copies, cuts, duplicates and deletes. Copy and paste works between notes (tap an empty spot with the lasso, or **+ → Paste**), and into other apps as an image.
