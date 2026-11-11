@@ -76,11 +76,12 @@ jobs:
 
       - name: Feature check
         run: |
-          # Drives the lasso, ink conversion, find, page, export and colour features on a fresh
+          # Drives the lasso, ink conversion, find, page, export, colour and subject-tool features
+          # (including a first Python start, which downloads Pyodide) on a fresh
           # note in the simulator and fails the job if any check fails or the app doesn't finish.
           mkdir -p feature-check
           xcrun simctl launch --console-pty "$DEVICE" com.jacobsilberberg.margin -feature-check > feature-check/app-log.txt 2>&1 &
-          for i in $(seq 1 240); do
+          for i in $(seq 1 420); do
             if grep -q "FEATURE_CHECK_DONE" feature-check/app-log.txt 2>/dev/null; then echo "finished after ${i}s"; break; fi
             sleep 1
           done

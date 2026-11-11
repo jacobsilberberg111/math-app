@@ -69,6 +69,25 @@ extension DemoDirector {
         let outside = await run("label_diagram", #"{"page": 1, "x": 300, "y": 760, "width": 200, "height": 160, "labels": [{"text": "Far", "x": 20, "y": 20}]}"#)
         FeatureCheck.check("labels must point at the picture", outside?.isError == true)
 
+        // Code blocks: placed and drawn, then Python itself in the hidden web view (it needs the
+        // network the first time; if it can't start, that's reported rather than failed).
+        let code = await run("code", #"{"page": 1, "x": 60, "y": 40, "title": "Loop", "code": "for i in range(3):\n    print(i * i)"}"#)
+        var codeOK = false
+        if case .code(let c) = doc.content.elements.last?.kind { codeOK = c.code.contains("range(3)") && (doc.content.elements.last?.frame.height ?? 0) > 60 }
+        FeatureCheck.check("code tool", code?.isError == false && codeOK, code?.result.prefix(160).description ?? "nil")
+        let python = await PythonRunner.shared.run("name = input('Name? ')\nprint('Hi', name, 6 * 7)", stdin: ["Sam"], timeout: 60)
+        if python.status == .unavailable {
+            FeatureCheck.info("python unavailable in the simulator: \(python.error ?? python.detail ?? "")")
+        } else {
+            FeatureCheck.check("python runs", python.status == .finished && python.output.contains("Hi Sam 42"),
+                               "\(python.status.rawValue) in \(String(format: "%.1f", python.seconds))s: \(python.output.prefix(80)) \(python.error ?? "")")
+            let loop = await PythonRunner.shared.run("while True:\n    pass", stdin: [], timeout: 2)
+            FeatureCheck.check("python stops a stuck loop", loop.status == .timedOut, loop.status.rawValue)
+            let err = await PythonRunner.shared.run("x = 1\nprint(y)", stdin: [], timeout: 10)
+            FeatureCheck.check("python error is cleaned", err.status == .failed && (err.error ?? "").contains("NameError") && (err.error ?? "").contains("Line 2"),
+                               err.error?.prefix(120).description ?? "nil")
+        }
+
         let snap = PageRenderer.snapshot(doc, page: 0)
         FeatureCheck.check("render subject tools", snap != nil && (snap?.jpeg.count ?? 0) > 5000, "\(snap?.jpeg.count ?? 0) bytes")
         FeatureCheck.info("flowchart: \(FlowchartRenderer.tutorDescription(flowElement(doc) ?? FlowchartContent(nodes: [], edges: []), frame: flowEl?.frame ?? .zero).prefix(200))")
