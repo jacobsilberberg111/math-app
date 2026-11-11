@@ -67,7 +67,8 @@ struct LibraryView: View {
                                  scan: DocumentScanner.isAvailable ? { showScanner = true } : nil,
                                  reviewCards: { showFlashcards = true },
                                  practiseWeakSpots: practiseWeakSpots,
-                                 showAll: { selection = .all }, showSubject: { selection = .subject($0) })
+                                 showAll: { selection = .all }, showSubject: { selection = .subject($0) },
+                                 quizMe: quizMe, planRevision: planRevision)
                     } else {
                         grid
                     }

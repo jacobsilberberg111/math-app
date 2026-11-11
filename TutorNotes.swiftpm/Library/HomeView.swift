@@ -16,6 +16,8 @@ struct HomeView: View {
     var practiseWeakSpots: ([TopicStat]) -> Void
     var showAll: () -> Void
     var showSubject: (UUID) -> Void
+    var quizMe: (Subject) -> Void = { _ in }
+    var planRevision: (Subject) -> Void = { _ in }
 
     private var study: StudyStore { StudyStore.shared }
 
@@ -29,12 +31,28 @@ struct HomeView: View {
     }
 
     private var recents: [NoteMeta] { library.recentNotes }
+    /// Subjects with an exam coming up, soonest first.
+    private var upcomingExams: [Subject] {
+        library.subjects.filter { $0.daysToExam() != nil }.sorted { ($0.daysToExam() ?? 0) < ($1.daysToExam() ?? 0) }
+    }
     private var waiting: [NoteMeta] { Array(library.notesWithOpenQuestions.prefix(4)) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 summary
+                if !upcomingExams.isEmpty {
+                    section("Exams coming up") {
+                        VStack(spacing: 0) {
+                            ForEach(Array(upcomingExams.prefix(5).enumerated()), id: \.element.id) { i, subject in
+                                if i > 0 { Divider().padding(.leading, 60) }
+                                ExamRow(subject: subject, open: { showSubject(subject.id) },
+                                        quiz: { quizMe(subject) }, plan: { planRevision(subject) })
+                            }
+                        }
+                        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                    }
+                }
                 actions
                 studyRow
                 if let latest = recents.first {
@@ -373,6 +391,48 @@ private struct WaitingRow: View {
     }
 }
 
+/// An upcoming exam: the subject, the countdown, and quick ways to revise for it.
+private struct ExamRow: View {
+    let subject: Subject
+    var open: () -> Void
+    var quiz: () -> Void
+    var plan: () -> Void
+
+    var body: some View {
+        let days = subject.daysToExam() ?? 0
+        HStack(spacing: 12) {
+            Button(action: open) {
+                HStack(spacing: 12) {
+                    Image(systemName: subject.resolvedKind.symbol)
+                        .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(hex: subject.colorHex).gradient))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(subject.examLabel).font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
+                        Text(subject.examDate?.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) ?? "")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Text(days == 0 ? "Today" : days == 1 ? "Tomorrow" : "\(days) days")
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundStyle(days <= 7 ? Color(hex: "#E5484D") : .primary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Menu {
+                Button(action: quiz) { Label("Quiz Me on My Notes", systemImage: "questionmark.bubble") }
+                Button(action: plan) { Label("Plan My Revision", systemImage: "calendar.badge.clock") }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.system(size: 20)).frame(width: 36, height: 36)
+            }
+            .accessibilityLabel("Revise for \(subject.examLabel)")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+}
+
 private struct SubjectTile: View {
     let subject: Subject
     let count: Int
@@ -381,12 +441,14 @@ private struct SubjectTile: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color(hex: subject.colorHex).gradient)
-                    .frame(width: 22, height: 30)
+                Image(systemName: subject.resolvedKind.symbol)
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(hex: subject.colorHex).gradient))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(subject.name).font(.headline).foregroundStyle(.primary).lineLimit(1)
-                    Text("\(count) note\(count == 1 ? "" : "s")").font(.subheadline).foregroundStyle(.secondary)
+                    Text(subject.daysToExam().map { "\(count) note\(count == 1 ? "" : "s") · exam in \($0)d" } ?? "\(count) note\(count == 1 ? "" : "s")")
+                        .font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }

@@ -1,6 +1,6 @@
 # Margin
 
-An iPad note-taking app for Apple Pencil, with a built-in Claude tutor that works **on the page** with you. It writes in clean type (or handwriting, if you prefer), typesets math, draws graphs and diagrams, circles your mistakes, adds practice questions, and marks your answers live.
+An iPad note-taking app for Apple Pencil, with a built-in Claude tutor that works **on the page** with you, for every subject you study. It writes in clean type (or handwriting, if you prefer), typesets math, draws graphs, real maps, charts, flowcharts and labelled diagrams, runs code, circles your mistakes, adds practice questions, and marks your answers live. Each subject gets its own specialist tutor, Ask menu, note templates and tools, built around studying for exams.
 
 > **Status: v1.** It builds cleanly in CI with Xcode 26.6, for the iPad simulator and as a Release device build. The platform-independent logic is unit-tested (see `CoreTests/`), and a scripted walkthrough runs the real canvas and tutor pipeline in the simulator to record the demo video. It hasn't been tested on a physical iPad with an Apple Pencil yet, so Pencil-specific behaviour (pressure, hover, squeeze, palm rejection) is unverified on hardware.
 
@@ -49,6 +49,26 @@ The app opens on **Home**:
 - **Study streak** and time studied this week.
 
 Press and hold the back button in a note to jump straight to another recent note.
+
+## Subjects
+
+Each subject has a **kind**: Maths, Science, English, Geography, History, Computing Technology, PDHPE or Other. Pick it when you make the subject (**New Subject** in the sidebar, or **Edit Subject…** from a subject's context menu); subjects made before kinds existed are recognised from their names. The kind changes:
+
+- **The tutor.** Its instructions get a specialist section for the subject and your year and school system (Settings → About you; NSW Year 9 by default, which adds NESA's key words and Stage 5 expectations). Science covers disease and the body's defences, working scientifically and practical reports. Geography uses BOLTSS, real data and the "general trend, example, anomaly" way of describing patterns. History works with sources, perspectives and TEEL extended responses. English gives teacher-style feedback without rewriting your work. Computing Technology reads and runs your code and teaches debugging. The section is fixed for a conversation (so it's cached); if you move a note to another subject, the tutor is told in the next turn.
+- **The Ask menu.** Eight actions per subject, for example Diagram it, Flowchart it, Key terms, Exam question and Graph my data in Science; Map it and Climate graph in Geography; Analyse source and Timeline in History; Feedback, Techniques and Plan paragraph in English; Check my code, Find the bug and Trace table in Computing.
+- **Templates.** A subject's page shows template cards, and they're also in the New Note menu: a Practical Report (aim, hypothesis, variables, risk assessment, method, results, discussion, conclusion), Concept Notes, a geography Case Study and Biome Profile, History Source Analysis and Event Notes, an English TEEL Paragraph and Text Study, a computing Code Lab and Desk Check, maths Worked Examples, plus Cornell Notes and a Blurt page for every subject. Headings are placed as your own typed text, so you can edit or move them.
+- **Paper and Insert.** New notebooks start on the subject's paper (grid for maths, dots for computing, ruled otherwise), and the Insert menu puts the subject's tools first (Map and Climate Graph in geography, Code Block in computing). Every tool is still available in any note under **More Tools**.
+
+**Exams.** Give a subject an exam date and title, and Home shows a countdown under **Exams coming up** (red in the last week). The tutor is told how many days are left. Each subject's page also has:
+- **Quiz me:** a new note where the tutor sets six questions from what's in your notes in that subject (the typed text and the handwriting the iPad has recognised).
+- **Blurt:** a blank page where you write everything you remember, then tap **Check my blurt**. The tutor ticks what's right, corrects what's wrong, and lists what you missed compared with your notes.
+- **Plan revision:** a day-by-day plan up to the exam (or for two weeks) built from your notes' topics, with short active tasks and spaced repeats.
+
+## Diagrams and flowcharts
+
+- **flowchart:** the tutor lists boxes and arrows, and the app lays them out: top to bottom for processes and algorithms (decision diamonds, Yes/No labels, loops drawn down the side), left to right for timelines, or round a circle for cycles like the water cycle.
+- **find_diagram:** the tutor searches Wikimedia Commons for a real, freely licensed diagram or photo (the heart, a plant cell, a virus, an oxbow lake), places it with a credit line, and sees it with a page-coordinate grid so its labels land on the right parts.
+- **label_diagram:** labels with leader lines in neat columns beside any picture: one the tutor found, a scan from your textbook or your own drawing. In **quiz mode** the labels become numbered blanks (answers hidden), printed labels can be covered up, and tapping **Check** on the quiz has the tutor mark it.
 
 ## Freeform boards
 
@@ -114,6 +134,8 @@ Default model is **Claude Sonnet 5.5**. Switch to Opus 5.5, Haiku 5.5 or Fable 5
 | `focus` | Scrolls you to something and pulses it, with a speech bubble. |
 | `remember` | Saves a durable note about you (misconceptions, goals). You can review it in Settings. |
 | `make_flashcards` | Adds cards to your spaced-repetition deck. |
+| `flowchart` | Flowcharts, process chains, timelines and cycles, laid out automatically. |
+| `find_diagram` / `label_diagram` | A real diagram from Wikimedia Commons, then labels or a labelling quiz on any picture. |
 | `outline_paper` / `score_paper` / `paper_summary` | Past papers: maps the questions, records each question's marks (with the score in the margin), and writes the results page. |
 
 **What makes it feel present:**
@@ -147,6 +169,8 @@ TutorNotes.swiftpm/
   Rendering/                 Paper, elements, math/text layout, snapshots, PDF export, OCR
   Math/                      LaTeX parser + typesetter, graph expression engine
   Tutor/                     Claude client, tools, executor, context, engine, chat panel
+  Core/                      Foundation-only logic, unit-tested on Linux: subjects and templates, flowchart and label layout
+  Resources/                 Bundled data (see Resources/README.md)
   Editor/                    Editor screen, toolbar, overlays, pages, practice, audio
   Library/                   Library and settings screens
   Demo/                      Scripted walkthrough used to record the demo video (-demo-script)
