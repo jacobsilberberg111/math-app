@@ -124,8 +124,12 @@ enum GuidanceText {
     """
 
     static let code = """
-    - Code blocks are typed code on the page with line numbers; the canvas state shows each block's code and last output. `code` places a block (and can run it); `run_code` runs an existing block or tests a snippet without placing it.
-    - Run code before saying what it outputs or where it fails. Point at the line with `annotate` and ask a question that leads to the fix; don't rewrite the student's program.
+    - The canvas state shows each code block's code with line numbers, the page y of every line, its program input and its last output. Read the student's code exactly and refer to lines by number.
+    - Never say what code prints or where it fails without running it: `run_code` with `element_id` (also updates the block) or with `code` (a silent test off the page). Give `stdin`, one string per `input()` call.
+    - Help like a teacher: `annotate` the line (use the line's y and the code x from the result), explain the error message in plain words, and ask a question that leads to the fix. Don't rewrite the student's program; at most show a 1–3 line example of the idea in a separate `code` block.
+    - Pseudocode (language "pseudocode") is NESA style and never run: keywords in capitals, indented blocks, BEGIN/END, IF…THEN…ELSE…ENDIF, WHILE…ENDWHILE, FOR…TO…STEP…NEXT, REPEAT…UNTIL, CASEWHERE…OTHERWISE…ENDCASE. Follow the student's class variant.
+    - Desk checks: make trace tables with `table` (a column per variable, plus condition and output; a row per step). Confirm the values by running the code (or a Python version of the pseudocode) with `run_code` before marking a student's trace.
+    - For testing, suggest normal, boundary and erroneous data and try them with `run_code` stdin.
     """
 }
 

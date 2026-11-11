@@ -70,6 +70,14 @@ Each subject has a **kind**: Maths, Science, English, Geography, History, Comput
 - **find_diagram:** the tutor searches Wikimedia Commons for a real, freely licensed diagram or photo (the heart, a plant cell, a virus, an oxbow lake), places it with a credit line, and sees it with a page-coordinate grid so its labels land on the right parts.
 - **label_diagram:** labels with leader lines in neat columns beside any picture: one the tutor found, a scan from your textbook or your own drawing. In **quiz mode** the labels become numbered blanks (answers hidden), printed labels can be covered up, and tapping **Check** on the quiz has the tutor mark it.
 
+## Code blocks (Computing Technology)
+
+**Insert → Code Block** (first in the menu for computing subjects, under More Tools elsewhere) adds a typed code card to the page: line numbers, syntax highlighting, long lines wrapped, and the last run's output under it (errors in red). Tap it for **Edit Code** or **Run**.
+
+- **The editor:** Python or NESA-style pseudocode; no autocorrect or smart quotes; auto-indent after `:`; Tab, Shift-Tab, ⌘[ and ⌘]; a key bar with common symbols; a **Program input** box (one line per `input()` call, echoed like IDLE); **Run** (⌘R). **Ask Tutor** saves and asks why it isn't working, to explain it, check it or give a hint. Done is one undoable step.
+- **Running Python:** Pyodide 0.29.5 (Python 3.13) in a hidden web view, inside a Web Worker so a stuck loop is stopped after 10 seconds (keeping what it printed). Tracebacks are cleaned up to just your lines. Python downloads about 12 MB the first time it starts, so that needs the internet; after that it's cached. Pseudocode is highlighted but not run.
+- **The tutor** reads each block's code, line positions and last output, runs code before saying what it does, points at lines instead of rewriting your program, and makes trace tables and flowcharts for algorithms.
+
 ## Freeform boards
 
 A board is one big sheet instead of pages. It opens at actual size and grows to the right and downward as you write. The top-left corner is fixed, so boards don't extend up or left.
@@ -136,6 +144,7 @@ Default model is **Claude Sonnet 5.5**. Switch to Opus 5.5, Haiku 5.5 or Fable 5
 | `make_flashcards` | Adds cards to your spaced-repetition deck. |
 | `flowchart` | Flowcharts, process chains, timelines and cycles, laid out automatically. |
 | `find_diagram` / `label_diagram` | A real diagram from Wikimedia Commons, then labels or a labelling quiz on any picture. |
+| `code` / `run_code` | Places a Python or pseudocode block (and can run it), or runs one of yours or a quick test off the page. |
 | `outline_paper` / `score_paper` / `paper_summary` | Past papers: maps the questions, records each question's marks (with the score in the margin), and writes the results page. |
 
 **What makes it feel present:**
@@ -169,7 +178,8 @@ TutorNotes.swiftpm/
   Rendering/                 Paper, elements, math/text layout, snapshots, PDF export, OCR
   Math/                      LaTeX parser + typesetter, graph expression engine
   Tutor/                     Claude client, tools, executor, context, engine, chat panel
-  Core/                      Foundation-only logic, unit-tested on Linux: subjects and templates, flowchart and label layout
+  Core/                      Foundation-only logic, unit-tested on Linux: subjects and templates, flowchart and label layout,
+                             code highlighting, wrapping and tracebacks, the Python runner page
   Resources/                 Bundled data (see Resources/README.md)
   Editor/                    Editor screen, toolbar, overlays, pages, practice, audio
   Library/                   Library and settings screens
