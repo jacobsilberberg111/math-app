@@ -243,6 +243,16 @@ struct TutorContextBuilder {
             return s
         case .image:
             return "\(e.id) image (\(who)) \(f)"
+        case .map(let m):
+            return "\(e.id) map (\(who)) \(f): " + MapRenderer.tutorDescription(m, frame: e.frame)
+        case .chart(let c):
+            return "\(e.id) chart (\(who)) \(f): " + ChartRenderer.tutorDescription(c, frame: e.frame)
+        case .flowchart(let fc):
+            return "\(e.id) flowchart (\(who)) \(f): " + FlowchartRenderer.tutorDescription(fc, frame: e.frame)
+        case .code(let c):
+            return "\(e.id) code block (\(who)) \(f): " + CodeRenderer.tutorDescription(c, frame: e.frame)
+        case .labels(let l):
+            return "\(e.id) diagram labels (\(who)) \(f): " + LabelRenderer.tutorDescription(l, frame: e.frame)
         }
     }
 }

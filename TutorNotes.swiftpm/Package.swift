@@ -40,7 +40,9 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "AppModule",
-            path: "."
+            path: ".",
+            // Bundled data: map outlines, climate zones (see Resources/README.md).
+            resources: [.process("Resources")]
         )
     ]
 )

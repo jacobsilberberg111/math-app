@@ -47,6 +47,10 @@ final class EditorModel: CanvasHost {
     /// Asks a board's floating tutor bar to take keyboard focus (it resets this).
     var focusBoardBar = false
     var showPaperQuestions = false
+    /// Subject inserts: the map and climate-graph pickers, and the code block being edited.
+    var showMapInsert = false
+    var showClimateInsert = false
+    var codeEditTarget: CodeEditTarget?
     /// The note was opened with a job for the tutor, and it has been started.
     @ObservationIgnored var handledStartRequest = false
     /// Whether opening a past paper starts its clock (untimed) and has the tutor map it.
@@ -183,6 +187,14 @@ final class EditorModel: CanvasHost {
         case .checkAnswer:
             showPanelIfNoKey()
             tutor.checkAnswer(for: element)
+        case .editCode:
+            codeEditTarget = CodeEditTarget(id: element.id)
+        case .runCode:
+            let id = element.id, doc = document
+            Task { await CodeExecution.run(elementID: id, in: doc) }
+        case .checkLabels:
+            showPanelIfNoKey()
+            tutor.checkLabels(for: element)
         default:
             break
         }
@@ -554,5 +566,31 @@ final class AudioController: NSObject, AVAudioPlayerDelegate {
             self?.isPlaying = false
             self?.canvas?.setReplay(time: nil)
         }
+    }
+}
+
+/// The code block open in the code editor.
+struct CodeEditTarget: Identifiable, Equatable {
+    let id: String
+}
+
+extension EditorModel {
+    /// Adds an element the student inserted (map, chart, code block…) in the middle of what they
+    /// can see on the current page, selects it, and returns it.
+    @discardableResult
+    func insertStudentElement(_ kind: ElementKind, size: CGSize, actionName: String) -> CanvasElement? {
+        let doc = document
+        let page = canvas?.currentPageIndex ?? currentPage
+        let pageRect = doc.pageRect(page)
+        let visible = (canvas?.visibleDocRect ?? pageRect).intersection(pageRect)
+        let w = min(size.width, doc.pageSize.width - 48), h = size.height
+        let centerDoc = visible.isNull ? pageRect.center : visible.center
+        let x = min(max(24, centerDoc.x - w / 2 - pageRect.minX), doc.pageSize.width - w - 24)
+        let y = max(20, centerDoc.y - h / 2 - pageRect.minY)
+        let e = CanvasElement(id: doc.nextElementID(), pageIndex: page, frame: CGRect(x: x, y: y, width: w, height: h),
+                              author: .student, kind: kind)
+        doc.add(e, actionName: actionName)
+        canvas?.select(e.id)
+        return e
     }
 }

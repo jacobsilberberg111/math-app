@@ -23,6 +23,8 @@ targets:
       - TutorNotes.swiftpm/Tutor
       - TutorNotes.swiftpm/Utilities
       - TutorNotes.swiftpm/Demo
+      - TutorNotes.swiftpm/Core
+      - TutorNotes.swiftpm/Resources
       - TutorNotes.swiftpm/Assets.xcassets
     # XcodeGen writes this Info.plist (it isn't committed) and points INFOPLIST_FILE at it. Xcode
     # merges it with the keys generated from the INFOPLIST_KEY_* settings below, so those still

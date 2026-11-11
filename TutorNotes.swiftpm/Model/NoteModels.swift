@@ -276,6 +276,13 @@ enum ElementKind: Codable, Equatable {
     case table(TableContent)
     case question(QuestionContent)
     case image(ImageContent)
+    // Subject tools (added with subjects): real-data maps, charts, flowcharts, code blocks and
+    // labelled diagrams. Their content types live in Core/.
+    case map(MapContent)
+    case chart(ChartContent)
+    case flowchart(FlowchartContent)
+    case code(CodeContent)
+    case labels(LabelSetContent)
 
     var typeName: String {
         switch self {
@@ -287,6 +294,11 @@ enum ElementKind: Codable, Equatable {
         case .table: return "table"
         case .question: return "question"
         case .image: return "image"
+        case .map: return "map"
+        case .chart: return "chart"
+        case .flowchart: return "flowchart"
+        case .code: return "code"
+        case .labels: return "labels"
         }
     }
 }

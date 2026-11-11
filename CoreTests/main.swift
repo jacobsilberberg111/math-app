@@ -279,5 +279,11 @@ let reflex = GeometryLayout.interiorBisector(arrowhead, 3)
 check(reflex.angle > .pi, "reflex angle \(reflex.angle)")
 check(GeometryLayout.isInside(GeometryLayout.angleLabelCenter(arrowhead, 3, labelSize: CGSize(width: 16, height: 20), arcRadius: 10), arrowhead), "reflex label inside")
 
+// Per-area tests (CoreTests/*Tests.swift).
+runSubjectTests()
+runGeoTests()
+runCodeTests()
+runDiagramTests()
+
 print("passes: \(passes), failures: \(failures)")
 exit(failures == 0 ? 0 : 1)

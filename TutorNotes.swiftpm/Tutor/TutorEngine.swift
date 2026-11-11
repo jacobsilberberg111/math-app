@@ -505,14 +505,18 @@ final class TutorEngine {
                         let input = b.json.trimmed.isEmpty ? JSONValue.object([:]) : try JSONValue.parse(b.json)
                         guard input.objectValue != nil else { throw ToolInputError(message: "Tool input must be a JSON object.") }
                         b.parsedInput = input
-                        outcome = executor.execute(toolID: b.toolID, name: b.toolName, input: input)
+                        outcome = await executor.perform(toolID: b.toolID, name: b.toolName, input: input)
                     } catch {
                         executor.discardLive(toolID: b.toolID)
                         let wrapper: JSONValue = ["INVALID_JSON": .string(String(b.json.prefix(2000)))]
                         outcome = CanvasActionExecutor.Outcome(result: wrapper.serialized(), isError: true, action: nil)
                     }
                     blocks[i] = b
-                    var result: JSONValue = ["type": "tool_result", "tool_use_id": .string(b.toolID), "content": .string(outcome.result)]
+                    var resultContent: JSONValue = .string(outcome.result)
+                    if !outcome.images.isEmpty {
+                        resultContent = .array([TutorContextBuilder.text(outcome.result)] + outcome.images.map { TutorContextBuilder.imageBlock(jpeg: $0) })
+                    }
+                    var result: JSONValue = ["type": "tool_result", "tool_use_id": .string(b.toolID), "content": resultContent]
                     if outcome.isError, case .object(var o) = result {
                         o["is_error"] = true
                         result = .object(o)
@@ -606,6 +610,14 @@ final class TutorEngine {
         case "score_paper": return "Marking against the scheme…"
         case "paper_summary": return "Writing up your results…"
         case "make_flashcards": return "Making flashcards…"
+        case "map": return "Drawing a map from real data…"
+        case "chart": return "Making a chart…"
+        case "climate_graph": return "Getting climate data…"
+        case "flowchart": return "Drawing a flowchart…"
+        case "label_diagram": return "Labelling the diagram…"
+        case "find_diagram": return "Finding a diagram…"
+        case "code": return "Writing code…"
+        case "run_code": return "Running the code…"
         default: return "Working on the page…"
         }
     }
@@ -1049,6 +1061,13 @@ final class TutorEngine {
     func checkAnswer(for element: CanvasElement) {
         guard case .question(let q) = element.kind else { return }
         send("Check my answer to Q\(q.number) and mark it.", focus: questionFocus(element, q), displayText: "Check Q\(q.number)")
+    }
+
+    /// A labelled-diagram quiz the student has filled in: mark each blank against the hidden labels.
+    func checkLabels(for element: CanvasElement) {
+        guard case .labels(let l) = element.kind else { return }
+        send("I've filled in the blanks on the labelled diagram \(element.id) (\(l.labels.count) labels). Mark each numbered blank against the hidden answers: a small tick or cross beside each one (accept correct spellings of the right part, and close alternatives a teacher would accept), the score out of \(l.labels.count), and a short note on any I got wrong.",
+             focus: (element.pageIndex, element.frame.insetBy(dx: -12, dy: -12)), displayText: "Check my labels")
     }
 
     private func questionFocus(_ e: CanvasElement, _ q: QuestionContent) -> (page: Int, rect: CGRect) {

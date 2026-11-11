@@ -137,6 +137,9 @@ struct NoteEditorView: View {
             Text("Allow Margin to use the microphone in Settings to record audio with your notes.")
         }
         .sheet(isPresented: $model.showPages) { PageNavigator(model: model) }
+        .sheet(isPresented: $model.showMapInsert) { MapInsertSheet(model: model) }
+        .sheet(isPresented: $model.showClimateInsert) { ClimateInsertSheet(model: model) }
+        .sheet(item: $model.codeEditTarget) { target in CodeEditorSheet(model: model, elementID: target.id) }
         .sheet(isPresented: $model.showPractice) { PracticeSheet(model: model) }
         .sheet(isPresented: $model.showPaper) { PaperPicker(model: model) }
         .sheet(isPresented: $model.showPaperQuestions) { PaperQuestionsSheet(model: model) }

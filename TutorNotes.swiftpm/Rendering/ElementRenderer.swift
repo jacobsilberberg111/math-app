@@ -126,6 +126,11 @@ enum ElementRenderer {
         case .table(let t): return 0.5 + Double(t.rows.count) * 0.12
         case .question(let q): return min(2.4, 0.6 + Double(q.prompt.count) * 0.012)
         case .image: return 0.35
+        case .map: return 1.4
+        case .chart: return 1.2
+        case .flowchart(let f): return min(2.6, 0.5 + Double(f.nodes.count) * 0.2)
+        case .code: return 0.6
+        case .labels(let l): return min(2.4, 0.4 + Double(l.labels.count) * 0.15)
         }
     }
 
@@ -175,6 +180,11 @@ enum ElementRenderer {
         case .table(let t): drawTable(t, rect: rect, progress: p, ctx: ctx)
         case .question(let q): drawQuestion(q, rect: rect, progress: p, env: env, ctx: ctx)
         case .image(let img): drawImage(img, rect: rect, progress: p, env: env, ctx: ctx)
+        case .map(let m): MapRenderer.draw(m, rect: rect, progress: p, env: env, ctx: ctx)
+        case .chart(let c): ChartRenderer.draw(c, rect: rect, progress: p, env: env, ctx: ctx)
+        case .flowchart(let f): FlowchartRenderer.draw(f, rect: rect, progress: p, env: env, ctx: ctx)
+        case .code(let c): CodeRenderer.draw(c, rect: rect, progress: p, env: env, ctx: ctx)
+        case .labels(let l): LabelRenderer.draw(l, rect: rect, progress: p, env: env, ctx: ctx)
         }
     }
 

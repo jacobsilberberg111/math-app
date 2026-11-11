@@ -366,6 +366,8 @@ final class SelectionOverlayView: UIView {
         var list: [ElementAction] = [.askTutor]
         switch element.kind {
         case .text: list.append(.edit)
+        case .code: list.append(contentsOf: [.editCode, .runCode])
+        case .labels(let l) where l.quiz: list.append(.checkLabels)
         case .question(let q):
             if !q.revealedHint { list.append(.revealHint) }
             list.append(.checkAnswer)
@@ -402,6 +404,7 @@ final class SelectionOverlayView: UIView {
     static func isResizable(_ e: CanvasElement) -> Bool {
         switch e.kind {
         case .image, .graph, .text, .math, .table, .numberLine, .question, .ink: return true
+        case .map, .chart, .flowchart, .code, .labels: return true
         }
     }
 
@@ -437,6 +440,9 @@ final class SelectionOverlayView: UIView {
         case .revealHint: return "lightbulb"
         case .revealSolution: return "eye"
         case .checkAnswer: return "checkmark.seal"
+        case .editCode: return "chevron.left.forwardslash.chevron.right"
+        case .runCode: return "play.fill"
+        case .checkLabels: return "checkmark.seal"
         }
     }
 
@@ -450,6 +456,9 @@ final class SelectionOverlayView: UIView {
         case .revealHint: return "Hint"
         case .revealSolution: return "Solution"
         case .checkAnswer: return "Check"
+        case .editCode: return "Edit Code"
+        case .runCode: return "Run"
+        case .checkLabels: return "Check"
         }
     }
 }

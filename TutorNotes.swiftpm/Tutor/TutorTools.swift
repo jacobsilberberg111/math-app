@@ -33,7 +33,10 @@ enum TutorTools {
     static let y = prop("number", "Top edge in page points (0 at the top of the page).")
     static let color: JSONValue = ["type": "string", "enum": colorEnum, "description": "Ink colour."]
 
-    static let definitions: JSONValue = .array([
+    /// Every tool, in a fixed order: the canvas tools, then the subject tools.
+    static let definitions: JSONValue = .array(coreDefinitions + GeoTools.definitions + DiagramTools.definitions + CodeTools.definitions)
+
+    static let coreDefinitions: [JSONValue] = [
         tool("write",
              "Write on the page in your handwriting: explanations, hints, encouragement, short working, labels. Inline math goes in $...$ as LaTeX (e.g. \"so $x = \\\\frac{3}{2}$\"). Your writing appears on the canvas live as you produce it. Keep each block short (one idea); use several calls for longer explanations. Avoid writing over the student's ink.",
              object([
@@ -287,7 +290,7 @@ enum TutorTools {
                 ("to_review", ["type": "array", "items": ["type": "string"], "description": "Topics or skills to review (short phrases)."]),
                 ("next_steps", prop("string", "One or two concrete next steps.")),
              ], required: ["summary"])),
-    ])
+    ]
 
     /// Tools whose text streams onto the canvas while it is generated.
     static let liveTools: Set<String> = ["write", "write_math"]

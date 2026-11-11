@@ -205,6 +205,11 @@ final class FindController {
         case .text(let t): return collapsed(t.rich ? RichTextParser.plainText(t.text) : t.text)
         case .question(let q): return collapsed(RichTextParser.plainText(q.prompt))
         case .table(let t): return collapsed(t.rows.flatMap { $0 }.map(RichTextParser.plainText).joined(separator: " "))
+        case .code(let c): return collapsed(c.code)
+        case .flowchart(let f): return collapsed(([f.title ?? ""] + f.nodes.map(\.text)).joined(separator: " "))
+        case .labels(let l): return collapsed(([l.title ?? ""] + l.labels.filter { !l.quiz || $0.revealed }.map(\.text)).joined(separator: " "))
+        case .map(let m): return m.title.map(collapsed)
+        case .chart(let c): return c.title.map(collapsed)
         default: return nil
         }
     }

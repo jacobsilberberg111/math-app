@@ -116,6 +116,10 @@ struct CanvasToolConfig: Equatable {
 
 enum ElementAction {
     case askTutor, explain, delete, duplicate, edit, revealHint, revealSolution, checkAnswer
+    /// Code blocks.
+    case editCode, runCode
+    /// Labelled-diagram quizzes.
+    case checkLabels
 }
 
 /// What the lasso's "To Text" and "To Math" buttons turn the selected handwriting into.

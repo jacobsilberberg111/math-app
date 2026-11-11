@@ -760,6 +760,21 @@ enum ElementResizer {
         case .table(let t):
             let s = ElementRenderer.tableSize(t, maxWidth: size.width)
             e.frame = CGRect(origin: start.origin, size: CGSize(width: size.width, height: s.height))
+        case .code(let c):
+            let s = CodeRenderer.size(for: c, width: max(240, size.width))
+            e.frame = CGRect(origin: start.origin, size: s)
+        case .labels(var l):
+            // Labels keep pointing at the same parts of the picture as the set is scaled.
+            let sx = size.width / max(start.width, 1), sy = size.height / max(start.height, 1)
+            l.labels = l.labels.map { lb in
+                var c = lb
+                c.anchor = CGPoint(x: lb.anchor.x * sx, y: lb.anchor.y * sy)
+                c.box = CGRect(x: lb.box.minX * sx, y: lb.box.minY * sy, width: lb.box.width, height: lb.box.height)
+                return c
+            }
+            l.covers = l.covers.map { CGRect(x: $0.minX * sx, y: $0.minY * sy, width: $0.width * sx, height: $0.height * sy) }
+            e.kind = .labels(l)
+            e.frame = CGRect(origin: start.origin, size: size)
         default:
             e.frame = CGRect(origin: start.origin, size: size)
         }

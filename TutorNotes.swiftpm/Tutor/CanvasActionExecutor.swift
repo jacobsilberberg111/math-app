@@ -38,6 +38,9 @@ final class CanvasActionExecutor {
         var result: String
         var isError: Bool
         var action: ChatAction?
+        /// JPEG images returned to the tutor with the result (e.g. a diagram it just inserted, so
+        /// it can see where to put labels).
+        var images: [Data] = []
     }
 
     let document: NoteDocument
@@ -387,6 +390,36 @@ final class CanvasActionExecutor {
 
     // MARK: Execute
 
+    /// Tools that wait on the network or on running code. They run through `perform`.
+    static let asyncTools: Set<String> = ["map", "chart", "climate_graph", "code", "run_code", "find_diagram"]
+
+    /// Runs any tool call: the async tools (data downloads, running code) are awaited, the rest
+    /// run straight away through `execute`.
+    func perform(toolID: String, name: String, input: JSONValue) async -> Outcome {
+        guard CanvasActionExecutor.asyncTools.contains(name) else { return execute(toolID: toolID, name: name, input: input) }
+        if !allowsStudyTools {
+            return Outcome(result: "\(name) isn't available while glancing; wait until the student asks.", isError: true, action: nil)
+        }
+        let args = ToolArgs(json: input)
+        do {
+            switch name {
+            case "map": return try await mapTool(args)
+            case "chart": return try await chartTool(args)
+            case "climate_graph": return try await climateGraphTool(args)
+            case "code": return try await codeTool(args)
+            case "run_code": return try await runCodeTool(args)
+            case "find_diagram": return try await findDiagramTool(args)
+            default: return Outcome(result: "Unknown tool \(name).", isError: true, action: nil)
+            }
+        } catch let e as ToolInputError {
+            return Outcome(result: e.message, isError: true, action: nil)
+        } catch is CancellationError {
+            return Outcome(result: "Cancelled.", isError: true, action: nil)
+        } catch {
+            return Outcome(result: "Failed: \(error.localizedDescription)", isError: true, action: nil)
+        }
+    }
+
     func execute(toolID: String, name: String, input: JSONValue) -> Outcome {
         let args = ToolArgs(json: input)
         if !allowsStudyTools && CanvasActionExecutor.studyTools.contains(name) {
@@ -416,6 +449,8 @@ final class CanvasActionExecutor {
             case "outline_paper": return try outlinePaper(args)
             case "score_paper": return try scorePaper(args)
             case "paper_summary": return try paperSummary(args)
+            case "flowchart": return try flowchartTool(args)
+            case "label_diagram": return try labelDiagramTool(args)
             default:
                 return Outcome(result: "Unknown tool \(name).", isError: true, action: nil)
             }
