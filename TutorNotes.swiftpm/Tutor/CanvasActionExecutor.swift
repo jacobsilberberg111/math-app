@@ -124,7 +124,8 @@ final class CanvasActionExecutor {
 
     private func noteCreated(_ id: String) { responseRecord.created.append(id) }
 
-    private func noteModified(_ e: CanvasElement) {
+    /// Records an element's state before the tutor changes it (for undoing the turn).
+    func noteModified(_ e: CanvasElement) {
         let known = responseRecord.originals[e.id] != nil || responseRecord.created.contains(e.id)
             || turnRecord.originals[e.id] != nil || turnRecord.created.contains(e.id)
         if !known { responseRecord.originals[e.id] = e }

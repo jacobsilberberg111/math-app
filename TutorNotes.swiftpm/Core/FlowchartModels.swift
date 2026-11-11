@@ -15,7 +15,12 @@ struct FlowchartContent: Codable, Equatable {
 }
 
 enum FlowDirection: String, Codable {
-    case down, right
+    /// Top to bottom (algorithms, processes).
+    case down
+    /// Left to right (timelines, chains).
+    case right
+    /// Around a circle, each stage leading to the next (water cycle, life cycles).
+    case cycle
 }
 
 enum FlowShape: String, Codable, CaseIterable {
