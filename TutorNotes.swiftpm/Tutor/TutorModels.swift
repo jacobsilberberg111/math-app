@@ -66,11 +66,24 @@ struct TutorSessionFile: Codable {
     var chat: [ChatItem] = []
     var observerNotes: [String] = []
     var sentAttachmentIDs: [String] = []
+    /// The subject guidance in this conversation's system prompt, fixed when it starts (so the
+    /// prompt cache and preserved thinking stay valid). Later changes are sent as a note.
+    var subjectGuidance: String?
+    /// The guidance last given to the tutor, if it changed after the conversation started.
+    var announcedGuidance: String?
 }
 
 /// Quick actions offered on the canvas and in the panel.
 enum TutorQuickAction: String, CaseIterable, Identifiable {
     case check, hint, nextStep, explain, solve, graphIt, similar, flashcards, markAll, practice
+    // Subject actions (see SubjectProfile.quickActions).
+    case diagram, processChart, keyTerms, examQuestion, dataChart, mapIt, climate, summarise
+    case sourceAnalysis, timeline, feedback, techniques, paragraphPlan, checkCode, debug, traceTable
+
+    /// The Ask menu for a kind of subject.
+    static func menu(for kind: SubjectKind) -> [TutorQuickAction] {
+        SubjectProfile.of(kind).quickActions.compactMap(TutorQuickAction.init(rawValue:))
+    }
 
     var id: String { rawValue }
 
@@ -86,6 +99,22 @@ enum TutorQuickAction: String, CaseIterable, Identifiable {
         case .flashcards: return "Flashcards"
         case .markAll: return "Mark my answers"
         case .practice: return "Practice"
+        case .diagram: return "Diagram it"
+        case .processChart: return "Flowchart it"
+        case .keyTerms: return "Key terms"
+        case .examQuestion: return "Exam question"
+        case .dataChart: return "Graph my data"
+        case .mapIt: return "Map it"
+        case .climate: return "Climate graph"
+        case .summarise: return "Summarise"
+        case .sourceAnalysis: return "Analyse source"
+        case .timeline: return "Timeline"
+        case .feedback: return "Feedback"
+        case .techniques: return "Techniques"
+        case .paragraphPlan: return "Plan paragraph"
+        case .checkCode: return "Check my code"
+        case .debug: return "Find the bug"
+        case .traceTable: return "Trace table"
         }
     }
 
@@ -101,6 +130,22 @@ enum TutorQuickAction: String, CaseIterable, Identifiable {
         case .flashcards: return "rectangle.on.rectangle.angled"
         case .markAll: return "checklist"
         case .practice: return "pencil.and.list.clipboard"
+        case .diagram: return "photo.on.rectangle.angled"
+        case .processChart: return "arrow.triangle.branch"
+        case .keyTerms: return "character.book.closed"
+        case .examQuestion: return "doc.questionmark"
+        case .dataChart: return "chart.bar.xaxis"
+        case .mapIt: return "map"
+        case .climate: return "cloud.sun.rain"
+        case .summarise: return "list.bullet.rectangle"
+        case .sourceAnalysis: return "doc.text.magnifyingglass"
+        case .timeline: return "calendar.day.timeline.left"
+        case .feedback: return "pencil.and.scribble"
+        case .techniques: return "quote.bubble"
+        case .paragraphPlan: return "text.alignleft"
+        case .checkCode: return "checkmark.circle"
+        case .debug: return "ant"
+        case .traceTable: return "tablecells"
         }
     }
 
@@ -128,6 +173,38 @@ enum TutorQuickAction: String, CaseIterable, Identifiable {
             return "Mark all the questions I've answered. Tick or cross each one, give a score, and write brief feedback. Then tell me what to practise next."
         case .practice:
             return "Give me some practice questions on what we're working on."
+        case .diagram:
+            return "Make a clear labelled diagram for \(target). For a real thing (a cell, organ, body system, pathogen, landform, apparatus) use find_diagram to get a real diagram and label_diagram to label its key parts; for a process use flowchart; for something simple, draw it. Put it in free space beside my work and add one line on what it shows."
+        case .processChart:
+            return "Turn \(target) into a flowchart with the flowchart tool: each stage or step in a short box, in order, with arrows (and decision diamonds or cycles where they belong). Place it in free space beside my work."
+        case .keyTerms:
+            return "Pick out the key terms in \(target) and write a short glossary on the page in free space: each term in bold with a one-line definition in simple words. Then offer to make flashcards of them."
+        case .examQuestion:
+            return "Write one exam-style question on \(target) as a question card, the way my teacher would set it: an appropriate key word (identify, describe, explain, compare, analyse…), a mark value, and space to answer. Put a marking guideline (what earns each mark) in the hidden solution."
+        case .dataChart:
+            return "Graph the data in \(target) with the chart tool: choose the right type (line graph for continuous data, column graph for categories), label both axes with units, add a title, and a line of best fit if it suits. Then ask me one question about the trend."
+        case .mapIt:
+            return "Show \(target) on a real map with the map tool: pick the region and the real dataset or layer that fits (or a blank outline map if I should label it), with BOLTSS. Then write one line describing the pattern (general trend, an example, an anomaly)."
+        case .climate:
+            return "Make a real climate graph for the place in \(target) with climate_graph (if no place is clear, ask me which one). Then help me describe it: annual rainfall, wettest and driest months, temperature range, and what biome it suggests."
+        case .summarise:
+            return "Summarise \(target) into 3–5 short dot points on the page in free space, keeping my words where they're good, then ask me one question to check I've got the main idea."
+        case .sourceAnalysis:
+            return "Help me analyse the source in \(target). Annotate it on the page with short prompts for origin, purpose, perspective, and usefulness and reliability, and ask me questions rather than writing the analysis for me."
+        case .timeline:
+            return "Make a timeline of the events in \(target) with the flowchart tool (direction right): dates in each box with a few words on what happened, in order. Mention any date you're unsure of."
+        case .feedback:
+            return "Give me teacher-style feedback on the writing in \(target): underline or bracket specific phrases with short margin comments on what works and what to improve (argument, TEEL structure, evidence, technique and effect, expression). Don't rewrite it for me. End with one clear next step."
+        case .techniques:
+            return "Identify the language and literary techniques in \(target): mark each on the page with the technique's name and a few words on its effect on the reader."
+        case .paragraphPlan:
+            return "Help me plan a TEEL paragraph for \(target): write the four headings (Topic sentence, Explanation, Evidence, Link) in free space with a guiding question under each, not the answers. Suggest which quote or example might work as evidence."
+        case .checkCode:
+            return "Check my code in \(target): run it with run_code, test it with a couple of inputs including an edge case, and mark what works and what doesn't on the page. Don't rewrite it; point at lines."
+        case .debug:
+            return "Help me find the bug in \(target). Run it with run_code to see what happens, then point at the line that's wrong with a short note and a question that leads me to the fix. Don't fix it for me."
+        case .traceTable:
+            return "Make a trace table (desk check) for the code or algorithm in \(target) with the table tool: one column per variable plus output, the first two rows filled in, and the rest blank for me to finish."
         }
     }
 }

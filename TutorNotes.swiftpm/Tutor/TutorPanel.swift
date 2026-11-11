@@ -222,7 +222,9 @@ struct TutorPanel: View {
             return false
         }
         if hasOpenQuestions { list.append(.markAll) }
-        list += [.check, .hint, .explain, .practice, .graphIt, .solve]
+        let subjectMenu = TutorQuickAction.menu(for: tutor.subjectKind)
+        list += [.check, .hint, .explain, .practice]
+        list += subjectMenu.filter { !list.contains($0) && $0 != .flashcards }.prefix(3)
         return list
     }
 

@@ -91,7 +91,11 @@ struct SettingsView: View {
 
     private var studentSection: some View {
         Section {
-            TextField("Level (e.g. Year 11 GCSE Higher, AP Calculus, first-year uni)", text: $settings.studentLevel)
+            Picker("School system", selection: $settings.curriculum) {
+                ForEach(Curriculum.allCases) { Text($0.title).tag($0) }
+            }
+            Stepper("Year \(settings.yearLevel)", value: $settings.yearLevel, in: 1...13)
+            TextField("Anything else about your level (e.g. advanced maths class)", text: $settings.studentLevel)
             TextField("Goals (e.g. exam in March, weak on trigonometry)", text: $settings.studentGoals, axis: .vertical)
                 .lineLimit(1...3)
         } header: {

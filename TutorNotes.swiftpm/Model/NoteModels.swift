@@ -24,6 +24,9 @@ struct NoteMeta: Codable, Identifiable, Equatable {
     var openQuestions: Int?
     /// Past papers: "52/80" once marking has started, or "80 marks" before.
     var paperScore: String?
+    /// Study notes made for revision: "blurt" (written from memory, checked against the
+    /// subject's notes) or "quiz" (questions from the subject's notes).
+    var studyMode: String?
 
     init(id: UUID = UUID(), title: String, subjectID: UUID? = nil, paper: PaperStyle? = nil) {
         self.id = id
@@ -40,6 +43,7 @@ struct NoteMeta: Codable, Identifiable, Equatable {
 
     var isFreeform: Bool { layout == .freeform }
     var isPastPaper: Bool { paperScore != nil }
+    var isBlurt: Bool { studyMode == "blurt" }
 
     /// When the note was last opened or edited, whichever is later (for "recent" lists).
     var lastActivity: Date { max(lastOpenedAt ?? .distantPast, modifiedAt) }
@@ -55,8 +59,39 @@ struct Subject: Codable, Identifiable, Equatable, Hashable {
     var id: UUID = UUID()
     var name: String
     var colorHex: String
+    // Added with subject kinds; optional so older subjects.json files still decode.
+    /// What kind of subject this is (nil for subjects made before kinds: inferred from the name).
+    var kind: SubjectKind?
+    /// The next exam or test, shown as a countdown on Home and given to the tutor.
+    var examDate: Date?
+    var examTitle: String?
 
     static let palette = ["#5B5BD6", "#E5484D", "#30A46C", "#F76B15", "#0090FF", "#8E4EC6", "#D6409F", "#12A594"]
+
+    var resolvedKind: SubjectKind { kind ?? SubjectKind.infer(from: name) }
+    var profile: SubjectProfile { SubjectProfile.of(resolvedKind) }
+
+    /// Whole days from today until the exam (0 = today), or nil if there's no upcoming exam.
+    func daysToExam(from now: Date = Date()) -> Int? {
+        guard let examDate else { return nil }
+        let cal = Calendar.current
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: now), to: cal.startOfDay(for: examDate)).day ?? 0
+        return days >= 0 ? days : nil
+    }
+
+    var examLabel: String { examTitle?.trimmingCharacters(in: .whitespaces).isEmpty == false ? examTitle! : "\(name) exam" }
+}
+
+/// Read access to the library's subjects for code that doesn't hold the library (the tutor,
+/// templates). LibraryStore keeps it current.
+@MainActor
+enum SubjectRegistry {
+    static var subjects: [Subject] = []
+
+    static func subject(_ id: UUID?) -> Subject? {
+        guard let id else { return nil }
+        return subjects.first { $0.id == id }
+    }
 }
 
 // MARK: - Paper

@@ -141,6 +141,13 @@ struct TutorContextBuilder {
             if let weak { s += "Recently found hard (share of marks): \(weak)." }
             s += "</student>\n"
         }
+        if let subject = SubjectRegistry.subject(doc.meta.subjectID) {
+            s += "<subject>\(subject.name)"
+            if let days = subject.daysToExam(), let date = subject.examDate {
+                s += " · next exam: \(subject.examLabel) on \(date.formatted(date: .abbreviated, time: .omitted)) (\(days == 0 ? "today" : days == 1 ? "tomorrow" : "in \(days) days"))"
+            }
+            s += "</subject>\n"
+        }
         if let paper = doc.content.paper { s += paperState(paper) }
         let mem = memory.promptText
         if !mem.isEmpty { s += "<memory>\n\(mem)\n</memory>\n" }

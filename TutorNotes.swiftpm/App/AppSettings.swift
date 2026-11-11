@@ -147,6 +147,9 @@ final class AppSettings: ObservableObject {
     @Published var tutorHand: TutorHandStyle { didSet { defaults.set(tutorHand.rawValue, forKey: "tutorHand") } }
     @Published var tutorInkHex: String { didSet { defaults.set(tutorInkHex, forKey: "tutorInkHex") } }
     @Published var studentLevel: String { didSet { defaults.set(studentLevel, forKey: "studentLevel") } }
+    /// Where the student studies and their year, for subject tutors and practice questions.
+    @Published var curriculum: Curriculum { didSet { defaults.set(curriculum.rawValue, forKey: "curriculum") } }
+    @Published var yearLevel: Int { didSet { defaults.set(yearLevel, forKey: "yearLevel") } }
     @Published var studentGoals: String { didSet { defaults.set(studentGoals, forKey: "studentGoals") } }
     @Published var fingerDrawing: Bool { didSet { defaults.set(fingerDrawing, forKey: "fingerDrawing") } }
     @Published var shapeRecognition: Bool { didSet { defaults.set(shapeRecognition, forKey: "shapeRecognition") } }
@@ -179,6 +182,8 @@ final class AppSettings: ObservableObject {
         tutorHand = TutorHandStyle(rawValue: d.string(forKey: "tutorHand") ?? "") ?? .typed
         tutorInkHex = d.string(forKey: "tutorInkHex") ?? "#7048E8"
         studentLevel = d.string(forKey: "studentLevel") ?? ""
+        curriculum = Curriculum(rawValue: d.string(forKey: "curriculum") ?? "") ?? .nsw
+        yearLevel = d.object(forKey: "yearLevel") as? Int ?? 9
         studentGoals = d.string(forKey: "studentGoals") ?? ""
         fingerDrawing = d.bool(forKey: "fingerDrawing")
         shapeRecognition = d.object(forKey: "shapeRecognition") as? Bool ?? true

@@ -129,15 +129,14 @@ struct LibraryView: View {
             Button("Rename") { if let r = renaming { library.rename(r, to: renameText) }; renaming = nil }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
-        .alert("New Subject", isPresented: $showNewSubject) {
-            TextField("Name", text: $newSubjectName)
-            Button("Create") { library.addSubject(name: newSubjectName); newSubjectName = "" }
-            Button("Cancel", role: .cancel) { newSubjectName = "" }
+        .sheet(isPresented: $showNewSubject) {
+            SubjectEditorSheet(existing: nil) { s in
+                let added = library.addSubject(s)
+                selection = .subject(added.id)
+            }
         }
-        .alert("Rename Subject", isPresented: Binding(get: { editingSubject != nil }, set: { if !$0 { editingSubject = nil } })) {
-            TextField("Name", text: $newSubjectName)
-            Button("Save") { if let s = editingSubject { library.renameSubject(s, to: newSubjectName) }; editingSubject = nil; newSubjectName = "" }
-            Button("Cancel", role: .cancel) { editingSubject = nil; newSubjectName = "" }
+        .sheet(item: $editingSubject) { s in
+            SubjectEditorSheet(existing: s) { library.updateSubject($0) }
         }
         .confirmationDialog("Delete this note?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
                             titleVisibility: .visible) {
@@ -165,14 +164,17 @@ struct LibraryView: View {
             Section("Subjects") {
                 ForEach(library.subjects) { subject in
                     HStack(spacing: 10) {
-                        RoundedRectangle(cornerRadius: 4).fill(Color(hex: subject.colorHex)).frame(width: 14, height: 18)
+                        Image(systemName: subject.resolvedKind.symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color(hex: subject.colorHex))
+                            .frame(width: 22)
                         Text(subject.name)
                         Spacer()
                         Text("\(library.notes.filter { $0.subjectID == subject.id }.count)").foregroundStyle(.secondary).font(.callout)
                     }
                     .tag(LibrarySelection.subject(subject.id))
                     .contextMenu {
-                        Button { newSubjectName = subject.name; editingSubject = subject } label: { Label("Rename", systemImage: "pencil") }
+                        Button { editingSubject = subject } label: { Label("Edit Subject…", systemImage: "pencil") }
                         Menu {
                             // Menus ignore .tint and draw symbols as templates, so name each colour and
                             // bake the colour into the icon image.
@@ -211,6 +213,13 @@ struct LibraryView: View {
 
     private var grid: some View {
         ScrollView {
+            if let id = currentSubjectID, let subject = library.subject(id), search.trimmed.isEmpty {
+                SubjectHeader(subject: subject, noteCount: visibleNotes.count,
+                              newFromTemplate: { createNote(from: $0) },
+                              quizMe: { quizMe(subject) },
+                              planRevision: { planRevision(subject) },
+                              edit: { editingSubject = subject })
+            }
             if visibleNotes.isEmpty {
                 ContentUnavailableView {
                     Label(search.isEmpty ? "No notes yet" : "No results", systemImage: search.isEmpty ? "square.and.pencil" : "magnifyingglass")
@@ -274,6 +283,13 @@ struct LibraryView: View {
                 if DocumentScanner.isAvailable {
                     Button { showScanner = true } label: { Label("Scan Document", systemImage: "doc.viewfinder") }
                 }
+                if let subject = library.subject(currentSubjectID) {
+                    Section("\(subject.name) Templates") {
+                        ForEach(subject.profile.templates) { t in
+                            Button { createNote(from: t) } label: { Label(t.title, systemImage: t.symbol) }
+                        }
+                    }
+                }
                 Section("Notebook") {
                     ForEach([PaperPattern.ruled, .grid, .dots, .blank, .graph, .cornell]) { p in
                         Button { createNote(PaperStyle(pattern: p, color: settings.defaultPaperColor)) } label: { Text(p.title) }
@@ -287,7 +303,13 @@ struct LibraryView: View {
         }
     }
 
-    private var defaultPaper: PaperStyle { PaperStyle(pattern: settings.defaultPattern, color: settings.defaultPaperColor) }
+    /// A subject's notebooks start on its paper (grid for maths, dots for computing…).
+    private var defaultPaper: PaperStyle {
+        if let subject = library.subject(currentSubjectID), let p = PaperPattern(rawValue: subject.profile.defaultPattern) {
+            return PaperStyle(pattern: p, color: settings.defaultPaperColor)
+        }
+        return PaperStyle(pattern: settings.defaultPattern, color: settings.defaultPaperColor)
+    }
 
     private static var stamp: String {
         let f = DateFormatter()
@@ -297,6 +319,43 @@ struct LibraryView: View {
 
     private func createNote(_ paper: PaperStyle) {
         open(library.createNote(title: "Note \(LibraryView.stamp)", subjectID: currentSubjectID, paper: paper))
+    }
+
+    private func createNote(from template: NoteTemplate) {
+        open(library.createNote(from: template, subject: library.subject(currentSubjectID), paperColor: settings.defaultPaperColor))
+    }
+
+    // MARK: Studying a subject
+
+    /// A fresh note where the tutor sets questions from what's in the subject's notes.
+    private func quizMe(_ subject: Subject) {
+        let digest = library.notesDigest(subjectID: subject.id)
+        let meta = library.createNote(title: "Quiz · \(subject.name) · \(LibraryView.stamp)", subjectID: subject.id,
+                                      paper: PaperStyle(pattern: .ruled, color: settings.defaultPaperColor), studyMode: "quiz")
+        let prompt: String
+        if digest.isEmpty {
+            prompt = "Quiz me on \(subject.name). I don't have notes in this subject yet, so ask me which topic first (one short question in chat), then make 5 questions with add_question."
+        } else {
+            prompt = "Quiz me on my \(subject.name) notes (below). Make 6 questions with add_question that test the most important ideas in them, mixing recall and understanding, easier to harder, worded the way my teacher would with key words and marks (accurate hidden answers, solutions and hints). Use a diagram, map or chart in a question where it fits the subject. Write a one-line title at the top first.\n\n" + digest
+        }
+        startRequest = (meta.id, EditorStartRequest(prompt: prompt, displayText: "Quiz me on my \(subject.name) notes"))
+        open(meta)
+    }
+
+    /// A revision timetable up to the exam (or two weeks), built from the subject's notes.
+    private func planRevision(_ subject: Subject) {
+        let topics = library.notes(in: subject.id, sort: .modified).filter { $0.studyMode == nil }.prefix(30).map(\.title)
+        let meta = library.createNote(title: "Revision plan · \(subject.name)", subjectID: subject.id,
+                                      paper: PaperStyle(pattern: .ruled, color: settings.defaultPaperColor))
+        let when: String
+        if let days = subject.daysToExam(), let date = subject.examDate {
+            when = "my \(subject.examLabel) on \(date.formatted(date: .complete, time: .omitted)), which is \(days == 0 ? "today" : "in \(days) day\(days == 1 ? "" : "s")")"
+        } else {
+            when = "the next two weeks (I haven't set an exam date)"
+        }
+        let prompt = "Make me a revision plan for \(subject.name) for \(when). Today is \(Date().formatted(date: .complete, time: .omitted)). My notes in this subject are titled: \(topics.isEmpty ? "(none yet)" : topics.joined(separator: "; ")). Write it on the page as a table: date, topic, and a short active task for each session (blurt, quiz me, practice questions, flashcards, past-paper questions, make a map/diagram from memory), about 25–40 minutes a day, spacing each topic out and revisiting weak ones. Then add 3 short tips for this subject's exam. Ask me in chat if I want to change anything."
+        startRequest = (meta.id, EditorStartRequest(prompt: prompt, displayText: "Plan my \(subject.name) revision"))
+        open(meta)
     }
 
     private func createBoard(title: String?) {

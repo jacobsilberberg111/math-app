@@ -36,6 +36,7 @@ final class LibraryStore {
 
     func load() {
         subjects = Storage.read([Subject].self, from: Storage.subjectsURL) ?? []
+        SubjectRegistry.subjects = subjects
         let fm = FileManager.default
         let folders = (try? fm.contentsOfDirectory(at: Storage.notesDir, includingPropertiesForKeys: nil)) ?? []
         var loaded: [NoteMeta] = []
@@ -51,8 +52,10 @@ final class LibraryStore {
     }
 
     private func seedWelcome() {
-        let maths = Subject(name: "Maths", colorHex: Subject.palette[0])
-        subjects = [maths, Subject(name: "Physics", colorHex: Subject.palette[4])]
+        // A Year 9 timetable to start from; subjects can be renamed, retyped or deleted.
+        func make(_ kind: SubjectKind) -> Subject { Subject(name: kind.title, colorHex: kind.defaultColorHex, kind: kind) }
+        let maths = make(.maths)
+        subjects = [maths, make(.science), make(.english), make(.geography), make(.history), make(.computing)]
         saveSubjects()
         let paper = PaperStyle(pattern: .grid, color: .white)
         let meta = NoteMeta(title: "Welcome to Margin", subjectID: maths.id, paper: paper)
@@ -67,6 +70,7 @@ final class LibraryStore {
     }
 
     func saveSubjects() {
+        SubjectRegistry.subjects = subjects
         let subjects = self.subjects
         Storage.ioQueue.async { try? Storage.write(subjects, to: Storage.subjectsURL) }
     }
@@ -104,10 +108,11 @@ final class LibraryStore {
     // MARK: Notes
 
     @discardableResult
-    func createNote(title: String, subjectID: UUID?, paper: PaperStyle, layout: NoteLayout = .pages) -> NoteMeta {
+    func createNote(title: String, subjectID: UUID?, paper: PaperStyle, layout: NoteLayout = .pages, studyMode: String? = nil) -> NoteMeta {
         var paper = paper
         var meta = NoteMeta(title: title, subjectID: subjectID, paper: paper)
         meta.pageCount = 1
+        meta.studyMode = studyMode
         var content = NoteContent()
         if layout == .freeform {
             // Cornell needs page edges; a board gets a plain grid instead.
@@ -234,11 +239,49 @@ final class LibraryStore {
         notes.append(copy)
     }
 
+    /// The text of a subject's notes (typed text and recognised handwriting), newest first, for
+    /// the tutor to quiz from or check a blurt against. Empty if there's nothing to go on.
+    func notesDigest(subjectID: UUID?, excluding: UUID? = nil, maxCharacters: Int = 24_000) -> String {
+        var out = ""
+        let candidates = notes
+            .filter { $0.subjectID == subjectID && $0.id != excluding && $0.studyMode == nil }
+            .sorted { $0.lastActivity > $1.lastActivity }
+        for meta in candidates {
+            guard let text = meta.searchText?.trimmed, text.count > 20 else { continue }
+            let entry = "<note title=\"\(meta.title)\" date=\"\(meta.modifiedAt.formatted(date: .abbreviated, time: .omitted))\">\n\(text)\n</note>\n"
+            if out.count + entry.count > maxCharacters {
+                let room = maxCharacters - out.count
+                if room > 400 { out += String(entry.prefix(room)) + "…\n</note>\n" }
+                break
+            }
+            out += entry
+        }
+        return out.isEmpty ? "" : "<notes>\n(The text of my notes, read from my handwriting by the iPad, so expect some misread words.)\n" + out + "</notes>"
+    }
+
     // MARK: Subjects
 
     func addSubject(name: String) {
         let color = Subject.palette[subjects.count % Subject.palette.count]
         subjects.append(Subject(name: name.trimmed.isEmpty ? "New Subject" : name.trimmed, colorHex: color))
+        saveSubjects()
+    }
+
+    @discardableResult
+    func addSubject(_ subject: Subject) -> Subject {
+        var s = subject
+        if s.name.trimmed.isEmpty { s.name = s.resolvedKind.title }
+        subjects.append(s)
+        saveSubjects()
+        return s
+    }
+
+    /// Saves changes to a subject's name, kind, colour or exam.
+    func updateSubject(_ subject: Subject) {
+        guard let i = subjects.firstIndex(where: { $0.id == subject.id }) else { return }
+        var s = subject
+        if s.name.trimmed.isEmpty { s.name = subjects[i].name }
+        subjects[i] = s
         saveSubjects()
     }
 

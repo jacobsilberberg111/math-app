@@ -182,6 +182,10 @@ struct NoteEditorView: View {
                     if let s = model.tutor.suggestion {
                         SuggestionPill(suggestion: s, action: { handle(s) }, dismiss: { model.tutor.dismissSuggestion() })
                     }
+                    if model.document.meta.isBlurt && !model.tutor.isBusy && !panelShown {
+                        BlurtCheckPill(action: checkBlurt)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                     if model.audio.isRecording || (model.audio.showsPlayer && model.audio.activeRecording != nil) {
                         AudioBar(audio: model.audio)
                     }
@@ -197,6 +201,23 @@ struct NoteEditorView: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.86), value: model.quickMenu)
             .animation(.easeInOut(duration: 0.2), value: model.toast)
         }
+    }
+
+    /// A blurt is written from memory; the tutor compares it with the subject's other notes.
+    private func checkBlurt() {
+        let meta = model.document.meta
+        let digest = library.notesDigest(subjectID: meta.subjectID, excluding: meta.id)
+        let subjectName = library.subject(meta.subjectID)?.name ?? "this subject"
+        var prompt = "I've finished my blurt: everything I could remember about \(subjectName), written from memory without my notes. "
+        if digest.isEmpty {
+            prompt += "I don't have other notes in this subject yet, so check it against what a Year \(settings.yearLevel) course covers on this topic. "
+        } else {
+            prompt += "Compare it with my notes below. "
+        }
+        prompt += "On the page: tick what I got right, circle anything wrong with a short correction, and then write a \"Missed\" list in free space of the important points I left out (short dot points, most important first). Finish with one line on what to focus on next, and offer flashcards for the missed points."
+        if !digest.isEmpty { prompt += "\n\n" + digest }
+        model.showPanelIfNoKey()
+        model.tutor.send(prompt, displayText: "Check my blurt", allPages: true)
     }
 
     private func handle(_ s: TutorSuggestion) {
@@ -303,3 +324,21 @@ struct ShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
+
+/// On a blurt page: check what was written against the subject's notes.
+private struct BlurtCheckPill: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Done? Check my blurt against my notes", systemImage: "brain.head.profile")
+                .font(.system(size: 15, weight: .semibold))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .background(.regularMaterial, in: Capsule())
+                .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+        }
+        .buttonStyle(.plain)
+    }
+}
+

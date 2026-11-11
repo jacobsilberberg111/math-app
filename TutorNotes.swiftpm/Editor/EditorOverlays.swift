@@ -48,7 +48,8 @@ struct QuickMenuView: View {
     @Bindable var model: EditorModel
     @EnvironmentObject var settings: AppSettings
 
-    static let actions: [TutorQuickAction] = [.check, .hint, .nextStep, .explain, .solve, .graphIt, .similar, .flashcards]
+    /// The subject's Ask menu (maths by default).
+    var actions: [TutorQuickAction] { TutorQuickAction.menu(for: model.tutor.subjectKind) }
 
     var body: some View {
         let tint = Color(hex: settings.tutorInkHex)
@@ -66,7 +67,7 @@ struct QuickMenuView: View {
                 .buttonStyle(.plain)
             }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                ForEach(QuickMenuView.actions) { action in
+                ForEach(actions) { action in
                     Button {
                         model.runQuick(action, on: request)
                     } label: {

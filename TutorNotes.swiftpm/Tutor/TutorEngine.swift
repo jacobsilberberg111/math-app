@@ -148,6 +148,7 @@ final class TutorEngine {
         let previous = currentTask
         previous?.cancel()
         suggestion = nil
+        noteSubjectChange()
         let newAttachments = document.content.attachments.filter { !session.sentAttachmentIDs.contains($0.id) }
         var item = ChatItem(role: .student, text: displayText ?? trimmed)
         item.attachmentNames = newAttachments.map(\.name)
@@ -174,6 +175,37 @@ final class TutorEngine {
             await self?.runTurn(userContent: content, replyID: reply.id, focusDoc: focusDoc,
                                 attachmentIDs: attachmentIDs, notes: notes, maxSteps: allPages ? 40 : 12)
         }
+    }
+
+    // MARK: Subject
+
+    /// The note's subject, if it's filed under one.
+    var subject: Subject? { SubjectRegistry.subject(document.meta.subjectID) }
+
+    var subjectKind: SubjectKind { subject?.resolvedKind ?? .other }
+
+    /// Specialist guidance for the note's subject as it is now.
+    func currentSubjectGuidance() -> String {
+        let name = subject?.name ?? "General (this note isn't filed under a subject)"
+        return SubjectProfile.of(subjectKind).tutorGuidance(curriculum: settings.curriculum, year: settings.yearLevel, subjectName: name)
+    }
+
+    /// The guidance in this conversation's system prompt: fixed at its first request.
+    private func conversationGuidance() -> String {
+        if let g = session.subjectGuidance { return g }
+        let g = currentSubjectGuidance()
+        session.subjectGuidance = g
+        return g
+    }
+
+    /// If the note moved to another subject (or the year changed) mid-conversation, tell the
+    /// tutor in the next turn rather than changing the system prompt.
+    private func noteSubjectChange() {
+        guard let started = session.subjectGuidance, !apiMessages.isEmpty else { return }
+        let current = currentSubjectGuidance()
+        guard current != (session.announcedGuidance ?? started) else { return }
+        session.announcedGuidance = current
+        pendingNotes.append("This note's subject or the student's year changed. From now on, follow this subject guidance instead of the one in your instructions:\n" + current)
     }
 
     func quick(_ action: TutorQuickAction, focus: (page: Int, rect: CGRect)? = nil) {
@@ -385,7 +417,10 @@ final class TutorEngine {
             "model": .string(model),
             "max_tokens": 32000,
             "stream": true,
-            "system": [["type": "text", "text": .string(TutorPrompts.system)]],
+            // The shared base prompt is cached across every note and subject; the subject's
+            // guidance follows it and is cached per conversation.
+            "system": [["type": "text", "text": .string(TutorPrompts.system), "cache_control": ["type": "ephemeral"]],
+                       ["type": "text", "text": .string(conversationGuidance())]],
             "tools": TutorTools.definitions,
             "tool_choice": ["type": "auto"],
             "thinking": ["type": "adaptive", "display": "summarized"],

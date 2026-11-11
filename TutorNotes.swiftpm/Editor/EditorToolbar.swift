@@ -347,6 +347,7 @@ struct EditorTopBar: View {
                 Button { onScan() } label: { Label("Scan Pages", systemImage: "doc.viewfinder") }
             }
             Button { model.selectTool(.text) } label: { Label("Text Box", systemImage: "textformat") }
+            subjectInserts
             if CanvasClip.pasteboardHasContent {
                 Button { model.canvas?.pasteFromClipboard(at: nil) } label: { Label("Paste", systemImage: "doc.on.clipboard") }
             }
@@ -369,6 +370,39 @@ struct EditorTopBar: View {
                 .frame(width: 40, height: 40)
         }
         .accessibilityLabel("Insert")
+    }
+
+    /// The subject's own tools first (maps for geography, code blocks for computing…), then
+    /// every other subject tool under More Tools so any note can use them.
+    @ViewBuilder
+    private var subjectInserts: some View {
+        let kind = model.tutor.subjectKind
+        let first = SubjectProfile.of(kind).insertTools
+        let rest = SubjectInsertTool.allCases.filter { !first.contains($0) }
+        if !first.isEmpty {
+            Section(kind.shortTitle) {
+                ForEach(first) { tool in insertButton(tool) }
+            }
+        }
+        if !rest.isEmpty {
+            Menu {
+                ForEach(rest) { tool in insertButton(tool) }
+            } label: {
+                Label("More Tools", systemImage: "square.grid.2x2")
+            }
+        }
+    }
+
+    private func insertButton(_ tool: SubjectInsertTool) -> some View {
+        Button {
+            switch tool {
+            case .map: model.showMapInsert = true
+            case .climateGraph: model.showClimateInsert = true
+            case .codeBlock: model.insertCodeBlock()
+            }
+        } label: {
+            Label(tool.title, systemImage: tool.symbol)
+        }
     }
 
     private func moreMenu(includesRecording: Bool) -> some View {
