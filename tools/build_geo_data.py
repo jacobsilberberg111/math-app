@@ -4,7 +4,8 @@
 Sources (all downloaded by this script into --cache):
   * Natural Earth v5.1.2 (public domain), https://www.naturalearthdata.com
       ne_50m_admin_0_countries, ne_50m_admin_1_states_provinces (Australia only),
-      ne_50m_rivers_lake_centerlines, ne_50m_lakes, ne_10m_populated_places_simple
+      ne_50m_rivers_lake_centerlines, ne_10m_rivers_australia, ne_50m_lakes,
+      ne_10m_populated_places_simple
   * Köppen-Geiger climate classification 1991-2020, Beck et al. (2023), CC BY 4.0
       "High-resolution (1 km) Köppen-Geiger maps for 1901-2099 based on constrained CMIP6
       projections", Scientific Data 10, 724. figshare article 21789074, koppen_geiger_tif.zip.
@@ -263,6 +264,7 @@ def build_world(ms, cache, work):
     states_src = fetch(NE_BASE + "ne_50m_admin_1_states_provinces.geojson", os.path.join(cache, "ne_50m_admin_1_states_provinces.geojson"))
     rivers_src = fetch(NE_BASE + "ne_50m_rivers_lake_centerlines.geojson", os.path.join(cache, "ne_50m_rivers_lake_centerlines.geojson"))
     lakes_src = fetch(NE_BASE + "ne_50m_lakes.geojson", os.path.join(cache, "ne_50m_lakes.geojson"))
+    au_rivers_src = fetch(NE_BASE + "ne_10m_rivers_australia.geojson", os.path.join(cache, "ne_10m_rivers_australia.geojson"))
 
     c_topo = os.path.join(work, "countries.topojson")
     mapshaper(ms, ["-i", countries_src,
@@ -278,6 +280,9 @@ def build_world(ms, cache, work):
     mapshaper(ms, ["-i", rivers_src, "-filter", "featurecla == 'River' && !!name",
                    "-filter-fields", "name,scalerank", "-simplify", SIMPLIFY, "weighted",
                    "-o", "format=geojson", r_json])
+    au_json = os.path.join(work, "rivers_au.geojson")
+    mapshaper(ms, ["-i", au_rivers_src, "-filter", "!!name", "-filter-fields", "name,scalerank",
+                   "-simplify", "25%", "weighted", "-o", "format=geojson", au_json])
     l_json = os.path.join(work, "lakes.geojson")
     mapshaper(ms, ["-i", lakes_src, "-filter-fields", "name,scalerank,featurecla",
                    "-simplify", SIMPLIFY, "weighted", "keep-shapes",
@@ -309,6 +314,8 @@ def build_world(ms, cache, work):
         if a2 and a2 != "-99":
             rec["a2"] = a2
         rec["n"] = p["NAME"]
+        if p.get("NAME_LONG") and p["NAME_LONG"] != p["NAME"]:
+            rec["nl"] = p["NAME_LONG"]
         aliases = []
         for k in ("NAME_LONG", "ADMIN", "FORMAL_EN"):
             v = p.get(k)
@@ -348,15 +355,31 @@ def build_world(ms, cache, work):
     out["states"] = states
 
     # Rivers (lines) and lakes (rings), each line its own arc.
+    # Rivers: world rivers at 1:50m, plus Australian rivers from the 1:10m Australian layer that
+    # the 1:50m set lacks (Murrumbidgee, Lachlan, Namoi…); their scale ranks 10–13 become 5–8.
+    def in_australia(lines):
+        return all(112 <= x <= 154 and -44 <= y <= -10 for l in lines for x, y in l)
+
     rivers = []
-    for f in json.load(open(r_json))["features"]:
-        g = f["geometry"]
-        if not g:
-            continue
-        lines = g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]]
-        idx = [store.add(l) for l in lines if len(l) >= 2]
-        if idx:
-            rivers.append({"n": f["properties"]["name"], "rank": f["properties"]["scalerank"], "l": idx})
+    au_names_50m = set()
+    for path, au in ((r_json, False), (au_json, True)):
+        for f in json.load(open(path))["features"]:
+            g = f["geometry"]
+            if not g:
+                continue
+            lines = g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]]
+            lines = [l for l in lines if len(l) >= 2]
+            name = f["properties"]["name"]
+            if not lines:
+                continue
+            if not au and in_australia(lines):
+                au_names_50m.add(name)
+            if au and name in au_names_50m:
+                continue
+            rank = f["properties"]["scalerank"]
+            if au:
+                rank = max(5, rank - 5)
+            rivers.append({"n": name, "rank": rank, "l": [store.add(l) for l in lines]})
     out["rivers"] = rivers
     lakes = []
     for f in json.load(open(l_json))["features"]:

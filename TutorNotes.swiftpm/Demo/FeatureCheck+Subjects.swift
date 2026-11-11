@@ -88,6 +88,31 @@ extension DemoDirector {
                                err.error?.prefix(120).description ?? "nil")
         }
 
+        // Maps and charts from bundled data (no network needed).
+        let map = await run("map", #"{"page": 2, "region": "australia", "layer": "climate_zones", "markers": [{"place": "Sydney"}, {"place": "Alice Springs"}]}"#)
+        var mapOK = false
+        if case .map = doc.content.elements.last?.kind { mapOK = true }
+        FeatureCheck.check("map tool (Australia climate zones)", map?.isError == false && mapOK, map?.result.prefix(200).description ?? "nil")
+        let outline = await run("map", #"{"page": 2, "y": 560, "region": "world", "layer": "outline"}"#)
+        FeatureCheck.check("blank world outline map", outline?.isError == false, outline?.result.prefix(120).description ?? "nil")
+        let chart = await run("chart", #"{"page": 2, "type": "line", "title": "Cooling water", "x_label": "Time (min)", "y_label": "Temperature (°C)", "categories": ["0", "2", "4", "6"], "series": [{"name": "Beaker A", "values": [80, 66, 55, 47]}], "source": "Class experiment"}"#)
+        FeatureCheck.check("chart tool (inline experiment data)", chart?.isError == false, chart?.result.prefix(120).description ?? "nil")
+        let mapSnap = PageRenderer.snapshot(doc, page: 1)
+        FeatureCheck.check("render maps and charts", mapSnap != nil && (mapSnap?.jpeg.count ?? 0) > 20000, "\(mapSnap?.jpeg.count ?? 0) bytes")
+        // Real data over the network: reported, not failed, if the service is down.
+        let climate = await run("climate_graph", #"{"page": 2, "place": "Dubbo, NSW"}"#)
+        if climate?.isError == false {
+            FeatureCheck.check("climate graph (Open-Meteo)", climate?.result.contains("mm") == true, climate?.result.prefix(160).description ?? "")
+        } else {
+            FeatureCheck.info("climate graph unavailable: \(climate?.result.prefix(160) ?? "nil")")
+        }
+        let hdi = await run("map", #"{"page": 2, "region": "world", "layer": "data", "dataset": "hdi"}"#)
+        if hdi?.isError == false {
+            FeatureCheck.check("data map (HDI)", hdi?.result.contains("Australia") == true, hdi?.result.prefix(200).description ?? "")
+        } else {
+            FeatureCheck.info("data map unavailable: \(hdi?.result.prefix(160) ?? "nil")")
+        }
+
         let snap = PageRenderer.snapshot(doc, page: 0)
         FeatureCheck.check("render subject tools", snap != nil && (snap?.jpeg.count ?? 0) > 5000, "\(snap?.jpeg.count ?? 0) bytes")
         FeatureCheck.info("flowchart: \(FlowchartRenderer.tutorDescription(flowElement(doc) ?? FlowchartContent(nodes: [], edges: []), frame: flowEl?.frame ?? .zero).prefix(200))")

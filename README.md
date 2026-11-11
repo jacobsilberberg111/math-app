@@ -64,6 +64,16 @@ Each subject has a **kind**: Maths, Science, English, Geography, History, Comput
 - **Blurt:** a blank page where you write everything you remember, then tap **Check my blurt**. The tutor ticks what's right, corrects what's wrong, and lists what you missed compared with your notes.
 - **Plan revision:** a day-by-day plan up to the exam (or for two weeks) built from your notes' topics, with short active tasks and spaced repeats.
 
+## Maps, charts and climate graphs
+
+Real data, never made-up numbers: the tutor chooses a map's region and dataset, and the app draws the outlines from bundled data and downloads the statistics itself.
+
+- **Maps** (`map`, or **Insert → Map**): the world, a continent, Oceania, Australia or a single state, or any box of longitude and latitude. Layers: political, a **blank outline** to label yourself, **climate zones** (Köppen–Geiger 1991–2020, or just the A–E groups for biomes), or a **data layer** from 41 datasets (population density, GDP per capita, life expectancy, HDI, CO₂, forest cover, urbanisation, internet use, malaria, TB, HIV, measles vaccination, child mortality, undernourishment, safe water and more) from the World Bank or Our World in Data. Every map has BOLTSS: border, orientation (north arrow), legend, title, scale bar and source with its year. The tutor can add highlighted countries or states, markers (looked up by name) and arrows for migration or the spread of disease, and it's told how longitude and latitude map onto the page, so its annotations land on the right places.
+- **Climate graphs** (`climate_graph`, or **Insert → Climate Graph**): type a town ("Dubbo, NSW", "Manaus") and get the standard rainfall columns and temperature line from 30 years of ERA5 reanalysis (Open-Meteo, 1991–2020 averages), with the annual total, temperature range and climate zone. Reanalysis is a 25 km grid, so it can read low for rainfall on very wet tropical coasts compared with a local weather station.
+- **Charts** (`chart`): column, bar, line, scatter with a line of best fit, and pie, for your own experiment results or textbook data (with their source), or real World Bank / Our World in Data time series for up to six countries.
+
+Maps and data download over the internet when they're made, then live in the note, so they work offline afterwards. Bundled data sources and licences are listed in `TutorNotes.swiftpm/Resources/README.md`.
+
 ## Diagrams and flowcharts
 
 - **flowchart:** the tutor lists boxes and arrows, and the app lays them out: top to bottom for processes and algorithms (decision diamonds, Yes/No labels, loops drawn down the side), left to right for timelines, or round a circle for cycles like the water cycle.
@@ -142,6 +152,7 @@ Default model is **Claude Sonnet 5.5**. Switch to Opus 5.5, Haiku 5.5 or Fable 5
 | `focus` | Scrolls you to something and pulses it, with a speech bubble. |
 | `remember` | Saves a durable note about you (misconceptions, goals). You can review it in Settings. |
 | `make_flashcards` | Adds cards to your spaced-repetition deck. |
+| `map` / `climate_graph` / `chart` | Real-data maps with BOLTSS, real climate graphs for any town, and charts of experiment or real-world data. |
 | `flowchart` | Flowcharts, process chains, timelines and cycles, laid out automatically. |
 | `find_diagram` / `label_diagram` | A real diagram from Wikimedia Commons, then labels or a labelling quiz on any picture. |
 | `code` / `run_code` | Places a Python or pseudocode block (and can run it), or runs one of yours or a quick test off the page. |
@@ -178,8 +189,9 @@ TutorNotes.swiftpm/
   Rendering/                 Paper, elements, math/text layout, snapshots, PDF export, OCR
   Math/                      LaTeX parser + typesetter, graph expression engine
   Tutor/                     Claude client, tools, executor, context, engine, chat panel
-  Core/                      Foundation-only logic, unit-tested on Linux: subjects and templates, flowchart and label layout,
-                             code highlighting, wrapping and tracebacks, the Python runner page
+  Core/                      Foundation-only logic, unit-tested on Linux: subjects and templates, map projection and
+                             layout, datasets, charts and climate data, flowchart and label layout, code highlighting,
+                             wrapping and tracebacks, the Python runner page
   Resources/                 Bundled data (see Resources/README.md)
   Editor/                    Editor screen, toolbar, overlays, pages, practice, audio
   Library/                   Library and settings screens
@@ -204,5 +216,7 @@ The demo video is recorded by launching the app with `-demo-script`. Student han
 - The lasso rotates ink and the tutor's marks; typed text, maths, images and cards move and resize but stay upright.
 - Opening a .margin file straight from AirDrop or Files needs the Xcode build (the sideloaded .ipa). In Swift Playgrounds, use **Import Note File…**.
 - The page map sent to the tutor gets long for pages with many strokes. Very dense pages may need tuning.
+- Maps, data layers, climate graphs and Wikimedia diagrams need the internet when they're made, and Python needs it the first time it starts (about 12 MB).
+- The subject tools (maps, Python, diagrams) are checked in the simulator by CI, but not yet on a real iPad.
 - iCloud sync and collaboration aren't implemented. Notes are stored locally in the app's Documents folder.
 - Anyone with the server's `APP_TOKEN` can spend your Claude credits, so keep it private and rotate it if it leaks. To give the app to other people, add per-user accounts to the server.

@@ -117,10 +117,12 @@ enum TutorPrompts {
 /// Guidance for the subject tools, kept beside the tools that define them.
 enum GuidanceText {
     static let geo = """
-    - `map` draws a real map: political outlines, a blank outline map for the student to label, climate zones, or a real dataset fetched from the World Bank or Our World in Data. You choose the dataset; the app fetches the numbers. Never type statistics into a map or chart yourself and never quote figures you didn't get from a tool result or the student's materials.
-    - `climate_graph` draws a real climate graph for any place (monthly rainfall columns and a temperature line). Use it for biomes and for comparing places.
-    - `chart` draws column, bar, line, scatter and pie charts from data the student collected or that comes from their materials, or real World Bank time series.
-    - Maps include BOLTSS (border, orientation, legend, title, scale, source). Describe patterns as general trend, specific examples with data, and anomalies.
+    - `map` draws an atlas-style map with BOLTSS built in: political, a blank `outline` for the student to label, `climate_zones` (Köppen–Geiger; climate_detail "groups" for biomes), or `data` (a choropleth the app downloads from the World Bank or Our World in Data). You choose the dataset and region; the app fetches the numbers.
+    - Never type real-world statistics from memory into a map, chart, label or explanation. Quote only figures from a tool result or the student's materials, with their year and source.
+    - To point at places on a map, add markers, routes or highlights, or convert lon/lat with the formula in the tool result (the canvas state repeats it for the map's current frame).
+    - `climate_graph` makes a real climate graph (ERA5, 1991–2020 averages) for any town. Use it for biomes and comparing places, and read the monthly values from the result rather than the picture. Reanalysis can read low for rainfall on wet tropical coasts compared with a local weather station.
+    - `chart`: inline values only for the student's own, experiment or worksheet/textbook data (give `source`); real statistics come through `data`.
+    - Describe a pattern as general trend, then specific examples with data from the result, then anomalies; when teaching map skills, name each BOLTSS element.
     """
 
     static let code = """
