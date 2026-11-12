@@ -177,6 +177,11 @@ struct NoteEditorView: View {
                         .transition(.scale(scale: 0.92).combined(with: .opacity))
                 }
 
+                if model.showCalculator {
+                    CalculatorOverlay(model: model)
+                        .transition(.scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
+                }
+
                 VStack(spacing: 10) {
                     Spacer()
                     if let s = model.tutor.suggestion {

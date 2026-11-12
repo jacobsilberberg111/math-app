@@ -49,6 +49,8 @@ final class EditorModel: CanvasHost {
     var showPaperQuestions = false
     /// Subject inserts: the map and climate-graph pickers, and the code block being edited.
     var showMapInsert = false
+    /// The floating scientific calculator (Maths notes have a toolbar button for it).
+    var showCalculator = false
     var showClimateInsert = false
     var codeEditTarget: CodeEditTarget?
     /// The note was opened with a job for the tutor, and it has been started.

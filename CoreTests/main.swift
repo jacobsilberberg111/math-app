@@ -285,6 +285,7 @@ runGeoTests()
 runCodeTests()
 runDiagramTests()
 runPalmTests()
+runCalculatorTests()
 
 print("passes: \(passes), failures: \(failures)")
 exit(failures == 0 ? 0 : 1)

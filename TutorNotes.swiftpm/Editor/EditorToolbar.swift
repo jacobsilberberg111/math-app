@@ -77,6 +77,11 @@ struct EditorTopBar: View {
                 if fit == .roomy || fit == .standard { inkRow } else { inkButton }
             }
             Spacer(minLength: 6)
+            if model.tutor.subjectKind == .maths {
+                BarButton(symbol: "plus.forwardslash.minus", label: "Calculator") {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.showCalculator.toggle() }
+                }
+            }
             insertMenu
             if fit != .compact { RecordButton(audio: model.audio) }
             moreMenu(includesRecording: fit == .compact)
@@ -396,6 +401,7 @@ struct EditorTopBar: View {
     private func insertButton(_ tool: SubjectInsertTool) -> some View {
         Button {
             switch tool {
+            case .calculator: withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.showCalculator = true }
             case .map: model.showMapInsert = true
             case .climateGraph: model.showClimateInsert = true
             case .codeBlock: model.insertCodeBlock()

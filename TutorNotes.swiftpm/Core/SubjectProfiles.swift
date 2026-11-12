@@ -141,12 +141,13 @@ struct TemplateSection: Equatable {
 
 /// Tools the Insert menu offers first for a subject (all are available everywhere under More).
 enum SubjectInsertTool: String, CaseIterable, Identifiable {
-    case map, climateGraph, codeBlock
+    case calculator, map, climateGraph, codeBlock
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .calculator: return "Calculator"
         case .map: return "Map"
         case .climateGraph: return "Climate Graph"
         case .codeBlock: return "Code Block"
@@ -155,6 +156,7 @@ enum SubjectInsertTool: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .calculator: return "plus.forwardslash.minus"
         case .map: return "map"
         case .climateGraph: return "cloud.sun.rain"
         case .codeBlock: return "chevron.left.forwardslash.chevron.right"
@@ -195,6 +197,7 @@ struct SubjectProfile {
 
     var insertTools: [SubjectInsertTool] {
         switch kind {
+        case .maths: return [.calculator]
         case .geography: return [.map, .climateGraph]
         case .science, .pdhpe: return [.map]
         case .history: return [.map]

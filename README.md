@@ -57,12 +57,28 @@ Each subject has a **kind**: Maths, Science, English, Geography, History, Comput
 - **The tutor.** Its instructions get a specialist section for the subject and your year and school system (Settings → About you; NSW Year 9 by default, which adds NESA's key words and Stage 5 expectations). Science covers disease and the body's defences, working scientifically and practical reports. Geography uses BOLTSS, real data and the "general trend, example, anomaly" way of describing patterns. History works with sources, perspectives and TEEL extended responses. English gives teacher-style feedback without rewriting your work. Computing Technology reads and runs your code and teaches debugging. The section is fixed for a conversation (so it's cached); if you move a note to another subject, the tutor is told in the next turn.
 - **The Ask menu.** Eight actions per subject, for example Diagram it, Flowchart it, Key terms, Exam question and Graph my data in Science; Map it and Climate graph in Geography; Analyse source and Timeline in History; Feedback, Techniques and Plan paragraph in English; Check my code, Find the bug and Trace table in Computing.
 - **Templates.** A subject's page shows template cards, and they're also in the New Note menu: a Practical Report (aim, hypothesis, variables, risk assessment, method, results, discussion, conclusion), Concept Notes, a geography Case Study and Biome Profile, History Source Analysis and Event Notes, an English TEEL Paragraph and Text Study, a computing Code Lab and Desk Check, maths Worked Examples, plus Cornell Notes and a Blurt page for every subject. Headings are placed as your own typed text, so you can edit or move them.
-- **Paper and Insert.** New notebooks start on the subject's paper (grid for maths, dots for computing, ruled otherwise), and the Insert menu puts the subject's tools first (Map and Climate Graph in geography, Code Block in computing). Every tool is still available in any note under **More Tools**.
+- **Paper and Insert.** New notebooks start on the subject's paper (grid for maths, dots for computing, ruled otherwise), and the Insert menu puts the subject's tools first (Calculator in maths, Map and Climate Graph in geography, Code Block in computing). Every tool is still available in any note under **More Tools**.
 
 **Exams.** Give a subject an exam date and title, and Home shows a countdown under **Exams coming up** (red in the last week). The tutor is told how many days are left. Each subject's page also has:
 - **Quiz me:** a new note where the tutor sets six questions from what's in your notes in that subject (the typed text and the handwriting the iPad has recognised).
 - **Blurt:** a blank page where you write everything you remember, then tap **Check my blurt**. The tutor ticks what's right, corrects what's wrong, and lists what you missed compared with your notes.
 - **Plan revision:** a day-by-day plan up to the exam (or for two weeks) built from your notes' topics, with short active tasks and spaced repeats.
+
+## Calculator (maths)
+
+Maths notes have a calculator button in the toolbar (also **+ → Calculator**, and under **More Tools** in any note). It's an on-screen replica of the **Casio fx-82AU PLUS II**, the calculator NSW students use, built from Casio's manual so it behaves like the one you'll have in the exam:
+
+- **Natural Display.** Fractions, mixed fractions, roots, ˣ√, powers, 10ˣ, eˣ, log□(□) and |□| are templates you type into, with the cursor moving through their boxes (▲▼ between numerator and denominator). Brackets left open are closed at the end, like the real thing.
+- **Exact answers.** In MathO, results stay as fractions, surds such as 3+2√2 or √2⁄2, and multiples of π. sin 45° gives √2⁄2 and cos⁻¹ 0 in Rad gives π⁄2. **S⇔D** switches to the decimal, and **SHIFT S⇔D** switches between mixed and improper fractions.
+- **Every COMP function.** Trig and inverse trig in Deg/Rad/Gra, the hyp menu, log/ln, x², x³, x⁻¹, x!, %, nPr, nCr, Pol/Rec (results go to X and Y), sexagesimal °'" input and display, DRG▶, Abs, Rnd, Ran#, RanInt#, GCD and LCM, ENG and ←ENG, and FACT, which factorises the answer into primes up to 997 and puts anything left in brackets, as the fx-82 does.
+- **Casio's priority order.** For example, (−)2² = −4, and 1÷2π = 1÷(2π) because implied multiplication binds tighter.
+- **Memory.** Ans, M with M+/M−, A–F, X and Y with STO/RCL, ▲▼ replay of past calculations, and CLR. Memory, setup and history are kept when you close the calculator or the app.
+- **SETUP** (SHIFT MODE): MthIO (MathO or LineO), LineIO, Deg/Rad/Gra, Fix, Sci and Norm 1/2, ab/c or d/c, STAT frequency, decimal point or comma, and contrast. Defaults are the calculator's factory settings (MthIO-LineO, Deg, Norm 2).
+- **STAT** (MODE 2): 1-VAR and all eight regressions (A+BX, _+CX², ln X, e^X, A•B^X, A•X^B, 1/X), with the statistics editor (X, Y and optional FREQ columns), and the Sum, Var, Reg and MinMax menus (n, x̄, σx, sx, Q1, med, Q3, A, B, C, r, x̂, ŷ…). Quartiles use the fx-82's halves method.
+- **VERIF** (MODE 3): type an equation or inequality using the VERIFY menu (SHIFT 6), and = shows TRUE or FALSE.
+- **Put it on the page.** The button next to ✕ adds the calculation on screen to the page as typeset math ("input = result"), in your pen colour.
+
+Drag the calculator by its top edge. SHIFT AC switches it off. Math ERROR and Syntax ERROR work like the calculator: ◀ or ▶ takes you back to fix the expression. The key layout follows the fx-82AU PLUS II. Multi-statements (ALPHA x⁻¹ for ":") show only the last result.
 
 ## Maps, charts and climate graphs
 

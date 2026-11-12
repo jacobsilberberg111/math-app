@@ -61,6 +61,17 @@ final class DemoDirector {
             model.autoStartPaper = false
         }
         if DemoDirector.showTutorPanel { model.showTutor = true }
+        // -uitest-show-calculator [-uitest-calc-keys fraction,d1,down,d2,...]: open the calculator
+        // and press keys, for screenshots.
+        if DemoDirector.arguments.contains("-uitest-show-calculator") {
+            model.showCalculator = true
+            let args = DemoDirector.arguments
+            if let i = args.firstIndex(of: "-uitest-calc-keys"), i + 1 < args.count {
+                for name in args[i + 1].split(separator: ",") {
+                    if let key = CalcKey(rawValue: String(name)) { _ = CalculatorModel.shared.press(key) }
+                }
+            }
+        }
         if let c = editorContinuation {
             editorContinuation = nil
             c.resume(returning: model)
