@@ -48,19 +48,23 @@ final class TouchWatcherGesture: UIGestureRecognizer {
 /// but the hand still reaches the scroll view and our finger gestures: it nudged the page, pinched
 /// the zoom, and a palm lifting off could register as a two-finger undo tap.
 ///
-/// A finger touch is treated as part of the writing hand when it lands while the pencil is on or
-/// hovering over the glass (or just after it lifts), when it's already down as the pencil lands, or
-/// when its contact is palm-sized. While any such touch is down, scrolling, zooming and finger
-/// gestures are off; a page nudge from a palm that landed just before the pencil is put back.
+/// A finger touch is treated as part of the writing hand when its contact is palm-sized, or when it
+/// lands close to the pencil (touching, hovering, or just lifted) or to a palm already resting
+/// (PalmClassifier). Those touches are taken out of scrolling and zooming the moment they land (the
+/// scroll view's pan and pinch let go of everything they track and pick up only new touches), so the
+/// resting hand never moves the page, while a finger of the other hand still scrolls and zooms. Only
+/// the pencil being on the glass stops scrolling altogether (a scroll would bend the stroke). A page
+/// nudge from a palm that landed just before the pencil is put back.
+///
+/// Taps, long-presses and region drags stay cautious: no finger triggers them while the writing hand
+/// is active.
 ///
 /// With finger drawing on, a finger is a pen: a fingertip pressed flat can be as big as a small
 /// palm, so contact size is ignored and only Apple Pencil activity marks fingers as the hand. The
 /// drawing policy is never switched mid-touch (doing so dropped finger strokes).
 extension NoteCanvasViewController {
-    /// Fingertips report a major radius of roughly 8–25 pt (more when pressed flat); a resting palm
-    /// or the side of a hand is larger.
-    static let palmContactRadius: CGFloat = 34
-    /// How long after the pencil or the hand lifts that new finger touches still count as the hand.
+    static var palmContactRadius: CGFloat { PalmClassifier.palmContactRadius }
+    /// How long after the pencil or the hand lifts that new finger touches near it still count as the hand.
     static let palmGracePeriod: TimeInterval = 0.35
 
     func setupPalmRejection() {
@@ -72,19 +76,16 @@ extension NoteCanvasViewController {
         canvasView.addGestureRecognizer(touchWatcher)
     }
 
-    /// New finger touches belong to the writing hand right now.
+    /// The writing hand is busy: finger taps and long-presses are ignored.
     var isWritingHandActive: Bool {
         !pencilTouches.isEmpty || pencilHovering || !palmTouches.isEmpty || Date() < palmGuardUntil
     }
 
-    /// Scrolling and zooming are off: the pencil is down or the hand is resting on the page.
-    /// (Hovering alone doesn't stop a scroll that's already under way.)
-    private var blocksScrolling: Bool {
-        !pencilTouches.isEmpty || !palmTouches.isEmpty || Date() < palmGuardUntil
-    }
+    /// Scrolling and zooming are off only while the pencil is on the glass.
+    private var blocksScrolling: Bool { !pencilTouches.isEmpty }
 
     func isPalmSized(_ t: UITouch) -> Bool {
-        !tool.fingerDrawing && t.type == .direct && t.majorRadius >= Self.palmContactRadius
+        t.type == .direct && PalmClassifier.isPalmSized(majorRadius: t.majorRadius, fingerDrawing: tool.fingerDrawing)
     }
 
     /// Whether a finger touch should be ignored by taps, long-presses and region drags.
@@ -93,19 +94,35 @@ extension NoteCanvasViewController {
         return palmTouches.contains(t) || isWritingHandActive || isPalmSized(t)
     }
 
+    /// Where the writing hand is, for classifying a new finger touch.
+    private var handContext: PalmClassifier.Context {
+        var c = PalmClassifier.Context()
+        c.pencilPoints = pencilTouches.map { $0.location(in: view) }
+        c.palmPoints = palmTouches.map { $0.location(in: view) }
+        c.inGrace = Date() < palmGuardUntil
+        if pencilHovering || c.inGrace { c.hoverPoint = lastPencilViewPoint }
+        c.fingerDrawing = tool.fingerDrawing
+        return c
+    }
+
     private func watchedTouchBegan(_ t: UITouch) {
         switch t.type {
         case .pencil:
             pencilTouches.insert(t)
-            // Fingers already on the glass as the pencil lands are the hand holding it.
-            if !fingerTouches.isEmpty {
-                palmTouches.formUnion(fingerTouches)
-                fingerTouches.removeAll()
-                restorePalmNudgedScroll()
+            let p = t.location(in: view)
+            lastPencilViewPoint = p
+            // Fingers already on the glass near the pencil are the hand holding it; ones further
+            // away are the other hand, which may be scrolling.
+            let hand = fingerTouches.filter { isPalmSized($0) || $0.location(in: view).distance(to: p) <= PalmClassifier.handReach }
+            if !hand.isEmpty {
+                palmTouches.formUnion(hand)
+                fingerTouches.subtract(hand)
+                if fingerTouches.isEmpty { restorePalmNudgedScroll() }
             }
         case .direct:
-            if isWritingHandActive || isPalmSized(t) {
+            if PalmClassifier.isWritingHand(point: t.location(in: view), majorRadius: t.majorRadius, context: handContext) {
                 palmTouches.insert(t)
+                dropTouchesFromScrolling()
             } else {
                 if fingerTouches.isEmpty {
                     scrollBeforeFingers = (canvasView.contentOffset, zoom, Date())
@@ -126,6 +143,7 @@ extension NoteCanvasViewController {
     }
 
     private func watchedTouchMoved(_ t: UITouch) {
+        if pencilTouches.contains(t) { lastPencilViewPoint = t.location(in: view) }
         if isErasingTouch(t) {
             // Fill the gap since the last sample so a quick swipe doesn't skip over thin marks.
             let a = t.precisePreviousLocation(in: chrome), b = t.preciseLocation(in: chrome)
@@ -139,7 +157,8 @@ extension NoteCanvasViewController {
         guard fingerTouches.contains(t), isPalmSized(t) else { return }
         fingerTouches.remove(t)
         palmTouches.insert(t)
-        restorePalmNudgedScroll()
+        if fingerTouches.isEmpty { restorePalmNudgedScroll() }
+        dropTouchesFromScrolling()
         updatePalmGuard()
     }
 
@@ -156,7 +175,8 @@ extension NoteCanvasViewController {
     }
 
     /// Called from the hover recognizer as the pencil approaches and leaves the glass.
-    func setPencilHovering(_ hovering: Bool) {
+    func setPencilHovering(_ hovering: Bool, at point: CGPoint? = nil) {
+        if let point { lastPencilViewPoint = point }
         guard hovering != pencilHovering else { return }
         pencilHovering = hovering
         if !hovering { palmGuardUntil = max(palmGuardUntil, Date().addingTimeInterval(Self.palmGracePeriod)) }
@@ -165,16 +185,25 @@ extension NoteCanvasViewController {
 
     func updatePalmGuard() {
         let block = blocksScrolling
-        if block != scrollingBlockedForPalm {
-            scrollingBlockedForPalm = block
-            // Turning a recognizer off also cancels a scroll or pinch the hand had started.
-            canvasView.panGestureRecognizer.isEnabled = !block
-            canvasView.pinchGestureRecognizer?.isEnabled = !block
-        }
-        if block, pencilTouches.isEmpty, palmTouches.isEmpty {
-            // Only the grace period is left: look again once it has run out.
-            let wait = max(0.02, palmGuardUntil.timeIntervalSinceNow + 0.01)
-            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in self?.updatePalmGuard() }
+        guard block != scrollingBlockedForPalm else { return }
+        scrollingBlockedForPalm = block
+        // Turning a recognizer off also cancels a scroll or pinch that was under way.
+        canvasView.panGestureRecognizer.isEnabled = !block
+        canvasView.pinchGestureRecognizer?.isEnabled = !block
+    }
+
+    /// Makes the scroll view's pan and pinch let go of every touch they're tracking, so a touch
+    /// just taken as the writing hand is never part of a scroll or zoom; they pick up new touches
+    /// (another finger) again straight after.
+    private func dropTouchesFromScrolling() {
+        guard !scrollingBlockedForPalm else { return }
+        let pan = canvasView.panGestureRecognizer, pinch = canvasView.pinchGestureRecognizer
+        pan.isEnabled = false
+        pinch?.isEnabled = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.scrollingBlockedForPalm else { return }
+            pan.isEnabled = true
+            pinch?.isEnabled = true
         }
     }
 
@@ -190,6 +219,7 @@ extension NoteCanvasViewController {
         scrollBeforeFingers = nil
         guard Date().timeIntervalSince(before.date) < 1.5, abs(zoom - before.zoom) < 0.001 else { return }
         if canvasView.contentOffset.distance(to: before.offset) > 0.5 {
+            scrollReason = "palm nudge undone"
             canvasView.setContentOffset(before.offset, animated: true)
         }
     }

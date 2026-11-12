@@ -38,7 +38,12 @@ extension NoteCanvasViewController {
                     scrollToReveal(docFrame)
                 }
             }
-            v.progress = 0
+            if ElementRenderer.revealsByFading(e) {
+                v.progress = 1
+                UIView.animate(withDuration: min(0.6, max(0.25, job.duration * 0.5))) { v.alpha = 1 }
+            } else {
+                v.progress = 0
+            }
             let path = ElementRenderer.presencePath(e, env: environment()).map {
                 CGPoint(x: $0.x + docFrame.minX, y: $0.y + docFrame.minY)
             }
@@ -70,7 +75,9 @@ extension NoteCanvasViewController {
         }
         let t = (CACurrentMediaTime() - revealStart) / max(job.duration, 0.05)
         let eased = t >= 1 ? 1 : 1 - pow(1 - t, 1.6)
-        elementViews[job.elementID]?.progress = CGFloat(eased)
+        if let v = elementViews[job.elementID], !ElementRenderer.revealsByFading(v.element) {
+            v.progress = CGFloat(eased)
+        }
         if t >= 1 {
             activeReveal = nil
             startNextReveal()
@@ -79,8 +86,12 @@ extension NoteCanvasViewController {
 
     /// Finishes all pending reveals instantly (e.g. when the student starts writing).
     func flushReveals() {
-        if let job = activeReveal { elementViews[job.elementID]?.progress = 1 }
-        for job in revealQueue { elementViews[job.elementID]?.progress = 1 }
+        for id in ([activeReveal].compactMap { $0 } + revealQueue).map(\.elementID) {
+            guard let v = elementViews[id] else { continue }
+            v.progress = 1
+            v.layer.removeAllAnimations()
+            v.alpha = 1
+        }
         revealQueue.removeAll()
         activeReveal = nil
         displayLink?.invalidate()

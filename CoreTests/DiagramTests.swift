@@ -71,3 +71,34 @@ func runDiagramTests() {
     let tops = LabelLayout.spread([(990, 30), (995, 30), (1000, 30)], minY: 0, maxY: 1000)
     check(tops[2] + 30 <= 1000.5 && tops[1] + 30 + LabelLayout.gap <= tops[2] + 0.5, "spread fits: \(tops)")
 }
+
+func runPalmTests() {
+    typealias P = PalmClassifier
+    var c = P.Context()
+    // Nothing going on: a fingertip is a finger, a palm-sized contact is the hand.
+    check(!P.isWritingHand(point: CGPoint(x: 100, y: 100), majorRadius: 12, context: c), "plain finger scrolls")
+    check(P.isWritingHand(point: CGPoint(x: 100, y: 100), majorRadius: 50, context: c), "palm-sized contact is the hand")
+    // Pencil writing on the right: the heel of the hand nearby is the hand, the other hand's finger
+    // on the left still scrolls.
+    c.pencilPoints = [CGPoint(x: 800, y: 500)]
+    check(P.isWritingHand(point: CGPoint(x: 900, y: 650), majorRadius: 20, context: c), "near the pencil is the hand")
+    check(!P.isWritingHand(point: CGPoint(x: 150, y: 500), majorRadius: 15, context: c), "other hand far away still scrolls")
+    // Hovering pencil works the same way.
+    c = P.Context(); c.hoverPoint = CGPoint(x: 700, y: 400)
+    check(P.isWritingHand(point: CGPoint(x: 760, y: 560), majorRadius: 18, context: c), "near the hover point is the hand")
+    check(!P.isWritingHand(point: CGPoint(x: 80, y: 900), majorRadius: 18, context: c), "far from the hover point scrolls")
+    // A resting palm: more of the same hand nearby, the other hand away from it.
+    c = P.Context(); c.palmPoints = [CGPoint(x: 900, y: 800)]
+    check(P.isWritingHand(point: CGPoint(x: 820, y: 760), majorRadius: 16, context: c), "next to a resting palm is the hand")
+    check(!P.isWritingHand(point: CGPoint(x: 120, y: 300), majorRadius: 16, context: c), "other hand scrolls while the palm rests")
+    // Just after the pencil lifts, with no idea where: cautious.
+    c = P.Context(); c.inGrace = true
+    check(P.isWritingHand(point: CGPoint(x: 100, y: 100), majorRadius: 12, context: c), "grace without a location is cautious")
+    // Finger drawing: contact size means nothing, and fingers are pens unless the pencil is near.
+    c = P.Context(); c.fingerDrawing = true
+    check(!P.isWritingHand(point: CGPoint(x: 100, y: 100), majorRadius: 50, context: c), "finger drawing ignores contact size")
+    c.palmPoints = [CGPoint(x: 110, y: 110)]
+    check(!P.isWritingHand(point: CGPoint(x: 100, y: 100), majorRadius: 14, context: c), "finger drawing: palm points alone don't make a pen a palm")
+    c.pencilPoints = [CGPoint(x: 140, y: 140)]
+    check(P.isWritingHand(point: CGPoint(x: 100, y: 100), majorRadius: 14, context: c), "finger drawing: near the pencil is the hand")
+}

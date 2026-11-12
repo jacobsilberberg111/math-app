@@ -134,6 +134,15 @@ enum ElementRenderer {
         }
     }
 
+    /// Big, detailed items (maps, charts, flowcharts, code, label sets) fade in as a whole instead
+    /// of being redrawn on every frame of the write-on reveal, which made the page stutter.
+    static func revealsByFading(_ e: CanvasElement) -> Bool {
+        switch e.kind {
+        case .map, .chart, .flowchart, .code, .labels: return true
+        default: return false
+        }
+    }
+
     /// Points (relative to the element frame) the tutor's cursor follows while this element appears.
     static func presencePath(_ e: CanvasElement, env: RenderEnvironment) -> [CGPoint] {
         let size = e.frame.size

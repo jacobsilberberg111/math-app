@@ -1,5 +1,6 @@
 import UIKit
 import PencilKit
+import os
 
 /// Hosts the PencilKit canvas for a note: continuous vertical pages, zoom, typed/tutor elements
 /// layered under and over the ink, and everything the tutor does on the page.
@@ -67,6 +68,17 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     var palmGuardUntil = Date.distantPast
     var scrollingBlockedForPalm = false
     var scrollBeforeFingers: (offset: CGPoint, zoom: CGFloat, date: Date)?
+    /// Where Apple Pencil last touched or hovered, in this controller's view: locates the writing hand.
+    var lastPencilViewPoint: CGPoint?
+    /// When the student last scrolled or zoomed (the tutor doesn't move the page for a while after).
+    var lastUserScrollDate = Date.distantPast
+
+    // Scroll diagnostics: why the page last moved, for the jump logger (see scrollViewDidScroll).
+    var scrollReason: String? { didSet { scrollReasonDate = Date() } }
+    var scrollReasonDate = Date.distantPast
+    var lastLoggedOffset: CGPoint = .zero
+    static let scrollLog = Logger(subsystem: "com.jacobsilberberg.margin", category: "canvas-scroll")
+    var pendingRasterize: DispatchWorkItem?
 
     // Lasso tool (see +Lasso)
     let lasso = LassoState()
@@ -121,6 +133,9 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         canvasView.bouncesZoom = true
         canvasView.showsHorizontalScrollIndicator = false
         canvasView.keyboardDismissMode = .interactive
+        // Tapping the status bar (easy to do with the pencil, a fingertip or the side of the hand
+        // near the top edge) would otherwise fly back to the top of the note.
+        canvasView.scrollsToTop = false
         view.addSubview(canvasView)
 
         canvasView.insertSubview(underlay, at: 0)
@@ -158,7 +173,12 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             let fit = fitZoom
             updateZoomLimits()
             let topDocY = visibleDocRect.minY
-            if !userHasZoomed || !hasLaidOut {
+            // Reopening a note goes back to where the student was (and how far they'd zoomed).
+            let remembered = hasLaidOut ? nil : CanvasPositionMemory.load(document.meta.id)
+            if let z = remembered?.zoom {
+                canvasView.setZoomScale(min(max(z, canvasView.minimumZoomScale), canvasView.maximumZoomScale), animated: false)
+                userHasZoomed = abs(zoom - fit) > 0.01
+            } else if !userHasZoomed || !hasLaidOut {
                 canvasView.setZoomScale(fit, animated: false)
             }
             layoutDocument()
@@ -167,11 +187,18 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             let inset = canvasView.contentInset
             let maxX = max(-inset.left, canvasView.contentSize.width - canvasView.bounds.width + inset.right)
             let maxY = max(0, canvasView.contentSize.height - canvasView.bounds.height)
-            let x = hasLaidOut ? min(max(canvasView.contentOffset.x, -inset.left), maxX) : -inset.left
-            let y = hasLaidOut ? min(max(0, topDocY * zoom), maxY) : 0
+            var x = hasLaidOut ? min(max(canvasView.contentOffset.x, -inset.left), maxX) : -inset.left
+            var y = hasLaidOut ? min(max(0, topDocY * zoom), maxY) : 0
+            if let r = remembered {
+                y = min(max(0, r.docY * zoom), maxY)
+                if r.zoom != nil { x = min(max(-inset.left, r.docX * zoom), maxX) }
+            }
+            scrollReason = hasLaidOut ? "width changed to \(Int(width))" : "first layout"
             canvasView.contentOffset = CGPoint(x: x, y: y)
-            // Programmatic zooms don't end in scrollViewDidEndZooming, so re-render elements for the new scale.
-            rasterizeForCurrentZoom()
+            // Programmatic zooms don't end in scrollViewDidEndZooming, so re-render elements for the
+            // new scale: at once the first time, otherwise once the width has settled (the tutor panel
+            // slides in over many layout passes, and redrawing every item on each one stutters).
+            if hasLaidOut { scheduleRasterize() } else { rasterizeForCurrentZoom() }
             lastLayoutWidth = width
             hasLaidOut = true
         }
@@ -182,6 +209,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        rememberPosition()
         endTextEditing()
         displayLink?.invalidate()
         displayLink = nil
@@ -272,10 +300,12 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
         guard scrollView === canvasView else { return }
         rasterizeForCurrentZoom()
+        rememberPosition()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === canvasView else { return }
+        logScrollJumpIfNeeded()
         updateVisiblePages()
         layoutLasso()
         let page = currentPageIndex
@@ -283,6 +313,66 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             lastReportedPage = page
             host?.canvasVisiblePageChanged(page)
         }
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === canvasView else { return }
+        lastUserScrollDate = Date()
+        scrollReason = "student scrolled"
+    }
+
+    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        guard scrollView === canvasView else { return }
+        lastUserScrollDate = Date()
+        scrollReason = "student zoomed"
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === canvasView else { return }
+        rememberPosition()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === canvasView, !decelerate else { return }
+        rememberPosition()
+    }
+
+    /// Saves where the student is in the note, so it reopens there.
+    func rememberPosition() {
+        guard hasLaidOut else { return }
+        let r = visibleDocRect
+        CanvasPositionMemory.save(document.meta.id, docX: r.minX, docY: r.minY, zoom: userHasZoomed ? zoom : nil)
+    }
+
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        // Belt and braces with scrollsToTop = false: never fly to the top of the note (or of a text box).
+        false
+    }
+
+    /// Logs any big jump of the page the student didn't make, with what caused it, so a jump seen on
+    /// a device can be traced (Console app: subsystem com.jacobsilberberg.margin, category
+    /// canvas-scroll).
+    func logScrollJumpIfNeeded() {
+        let o = canvasView.contentOffset
+        let previous = lastLoggedOffset
+        lastLoggedOffset = o
+        let jump = abs(o.y - previous.y)
+        guard hasLaidOut, jump > max(400, canvasView.bounds.height * 0.8),
+              !canvasView.isTracking, !canvasView.isDecelerating, !canvasView.isZooming else { return }
+        // A reason only explains a jump that follows soon after it was given.
+        let reason = Date().timeIntervalSince(scrollReasonDate) < 1.5 ? (scrollReason ?? "unknown") : "unknown"
+        let frames = reason == "unknown" ? Thread.callStackSymbols.prefix(14).joined(separator: " | ") : ""
+        let from = Int(previous.y), to = Int(o.y), size = Int(jump)
+        NoteCanvasViewController.scrollLog.notice("Page jumped \(size, privacy: .public) pt (y \(from, privacy: .public) to \(to, privacy: .public)), reason: \(reason, privacy: .public) \(frames, privacy: .public)")
+        print("SCROLL_JUMP \(size) pt, reason: \(reason)")
+    }
+
+    /// Re-renders element views at the current zoom once layout has settled.
+    func scheduleRasterize(after delay: TimeInterval = 0.2) {
+        pendingRasterize?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.rasterizeForCurrentZoom() }
+        pendingRasterize = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// Re-renders element views at the current zoom so text and graphs stay sharp.
@@ -411,6 +501,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
 
     func scrollToPage(_ index: Int, animated: Bool = true) {
         guard document.content.pages.indices.contains(index) else { return }
+        scrollReason = "go to page \(index + 1)"
         let y = max(0, (document.pageOrigin(index).y - document.topMargin / 2) * zoom)
         let maxY = max(0, canvasView.contentSize.height - canvasView.bounds.height)
         canvasView.setContentOffset(CGPoint(x: canvasView.contentOffset.x, y: min(y, maxY)), animated: animated)
@@ -420,6 +511,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     func scrollToReveal(_ docRect: CGRect, animated: Bool = true) {
         let visible = visibleDocRect.insetBy(dx: 0, dy: 40 / zoom)
         if visible.contains(docRect) { return }
+        scrollReason = "reveal \(docRect.roundedForDisplay)"
         let z = zoom
         var target = canvasView.contentOffset
         if docRect.minY < visible.minY || docRect.maxY > visible.maxY {
@@ -489,8 +581,13 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             v.progress = 1
             v.isLive = false
         case .write(let duration):
-            v.progress = 0
             v.isLive = false
+            if ElementRenderer.revealsByFading(element) {
+                v.progress = 1
+                v.alpha = 0
+            } else {
+                v.progress = 0
+            }
             enqueueReveal(elementID: element.id, duration: duration)
         case .live:
             v.progress = 1
@@ -628,9 +725,12 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         }
     }
 
-    /// True while the student has been writing in the last few seconds.
+    /// True while the student is busy on the page: writing in the last few seconds, or scrolling
+    /// and zooming (or just did). The tutor then doesn't move the page; it shows a "see what I
+    /// wrote" pill instead.
     var studentIsActive: Bool {
-        Date().timeIntervalSince(lastPencilDownDate) < 3
+        Date().timeIntervalSince(lastPencilDownDate) < 3 || Date().timeIntervalSince(lastUserScrollDate) < 8
+            || canvasView.isTracking || canvasView.isDecelerating || canvasView.isZooming
     }
 
     // MARK: Commands
@@ -663,3 +763,26 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         select(e.id)
     }
 }
+
+/// Where each note was last viewed (document coordinates of the top-left of the view, and the zoom
+/// if the student had zoomed), kept in UserDefaults.
+enum CanvasPositionMemory {
+    struct Position {
+        var docX: CGFloat
+        var docY: CGFloat
+        var zoom: CGFloat?
+    }
+
+    private static func key(_ id: UUID) -> String { "canvasPosition.\(id.uuidString)" }
+
+    static func save(_ id: UUID, docX: CGFloat, docY: CGFloat, zoom: CGFloat?) {
+        UserDefaults.standard.set([Double(docX), Double(docY), Double(zoom ?? 0)], forKey: key(id))
+    }
+
+    static func load(_ id: UUID) -> Position? {
+        guard let a = UserDefaults.standard.array(forKey: key(id)) as? [Double], a.count == 3,
+              a.allSatisfy({ $0.isFinite }) else { return nil }
+        return Position(docX: CGFloat(a[0]), docY: CGFloat(max(0, a[1])), zoom: a[2] > 0 ? CGFloat(a[2]) : nil)
+    }
+}
+

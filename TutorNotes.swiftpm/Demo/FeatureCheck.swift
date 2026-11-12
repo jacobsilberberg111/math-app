@@ -47,6 +47,7 @@ extension DemoDirector {
         await checkPages(model, canvas)
         await checkExport(model, library)
         await checkColours(model, canvas)
+        await checkScrolling(model, canvas)
         await checkSubjects(model, library)
         finishFeatureCheck()
     }
