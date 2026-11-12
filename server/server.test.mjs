@@ -219,3 +219,109 @@ test('unknown routes are 404', async () => {
   assert.equal(r.status, 404);
   close();
 });
+
+// ---- Canvas proxy ----
+
+const CANVAS_TOKEN = 'canvas-secret-token';
+
+/** Mock Canvas: an API list with a Link header, a file that redirects to another host. */
+async function setupCanvas(env = {}) {
+  const fileHost = http.createServer((req, res) => {
+    fileHost.seen.push({ url: req.url, headers: req.headers });
+    res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': '8' });
+    res.end('%PDF-1.4');
+  });
+  fileHost.seen = [];
+  const filePort = (await listen(fileHost)).split(':').pop();
+  const canvas = http.createServer((req, res) => {
+    canvas.seen.push({ method: req.method, url: req.url, headers: req.headers });
+    const origin = `http://127.0.0.1:${canvas.address().port}`;
+    if (req.url.startsWith('/api/v1/courses')) {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        link: `<${origin}/api/v1/courses?page=1&per_page=50>; rel="current",<${origin}/api/v1/courses?page=2&per_page=50>; rel="next"`,
+      });
+      res.end(JSON.stringify([{ id: 1, name: 'Maths' }]));
+    } else if (req.url.startsWith('/files/7/download')) {
+      // Canvas sends file downloads off to a storage host on another domain.
+      res.writeHead(302, { location: `http://localhost:${filePort}/blob/7?sig=abc` });
+      res.end();
+    } else {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{"errors":[{"message":"not found"}]}');
+    }
+  });
+  canvas.seen = [];
+  const canvasURL = await listen(canvas);
+  const { base, close } = await setup({ CANVAS_URL: canvasURL, CANVAS_TOKEN, ...env });
+  return {
+    base, canvas, fileHost, canvasURL,
+    close: () => { close(); canvas.close(); fileHost.close(); canvas.closeAllConnections?.(); fileHost.closeAllConnections?.(); },
+  };
+}
+
+test('canvas status says whether Canvas is set up', async () => {
+  const { base, close } = await setup();
+  let r = await fetch(`${base}/canvas/status`, { headers: auth });
+  assert.deepEqual(await r.json(), { configured: false, host: null });
+  r = await fetch(`${base}/canvas/api/v1/courses`, { headers: auth });
+  assert.equal(r.status, 503);
+  assert.equal((await r.json()).error.type, 'canvas_not_configured');
+  close();
+  const c = await setupCanvas();
+  r = await fetch(`${c.base}/canvas/status`, { headers: auth });
+  const s = await r.json();
+  assert.equal(s.configured, true);
+  assert.equal(s.host, new URL(c.canvasURL).host);
+  c.close();
+});
+
+test('canvas proxy needs the app token and adds the Canvas token itself', async () => {
+  const c = await setupCanvas();
+  let r = await fetch(`${c.base}/canvas/api/v1/courses`);
+  assert.equal(r.status, 401);
+  assert.equal(c.canvas.seen.length, 0);
+  r = await fetch(`${c.base}/canvas/api/v1/courses?per_page=50`, { headers: auth });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), [{ id: 1, name: 'Maths' }]);
+  const seen = c.canvas.seen[0];
+  assert.equal(seen.headers.authorization, `Bearer ${CANVAS_TOKEN}`);
+  assert.equal(seen.url, '/api/v1/courses?per_page=50');
+  // Paging links point back at the relay.
+  assert.equal(r.headers.get('link'), '</canvas/api/v1/courses?page=1&per_page=50>; rel="current",</canvas/api/v1/courses?page=2&per_page=50>; rel="next"');
+  c.close();
+});
+
+test('canvas proxy is read-only and limited to the API', async () => {
+  const c = await setupCanvas();
+  let r = await fetch(`${c.base}/canvas/api/v1/courses/1/assignments`, { method: 'POST', headers: auth, body: '{}' });
+  assert.equal(r.status, 405);
+  r = await fetch(`${c.base}/canvas/api/v1/conversations`, { method: 'DELETE', headers: auth });
+  assert.equal(r.status, 405);
+  r = await fetch(`${c.base}/canvas/login/oauth2/token`, { headers: auth });
+  assert.equal(r.status, 404);
+  r = await fetch(`${c.base}/canvas/file?url=${encodeURIComponent('https://evil.example.com/files/1/download')}`, { headers: auth });
+  assert.equal(r.status, 400);
+  assert.equal(c.canvas.seen.length, 0);
+  c.close();
+});
+
+test('canvas file downloads follow redirects without leaking the token', async () => {
+  const c = await setupCanvas();
+  const fileURL = `${c.canvasURL}/files/7/download?download_frd=1&verifier=x`;
+  const r = await fetch(`${c.base}/canvas/file?url=${encodeURIComponent(fileURL)}`, { headers: auth });
+  assert.equal(r.status, 200);
+  assert.equal(await r.text(), '%PDF-1.4');
+  assert.equal(c.canvas.seen[0].headers.authorization, `Bearer ${CANVAS_TOKEN}`);
+  assert.equal(c.fileHost.seen.length, 1);
+  assert.equal(c.fileHost.seen[0].headers.authorization, undefined);
+  c.close();
+});
+
+test('canvasOrigin cleans up addresses', async () => {
+  const { canvasOrigin } = await import('./server.mjs');
+  assert.equal(canvasOrigin('myschool.instructure.com'), 'https://myschool.instructure.com');
+  assert.equal(canvasOrigin(' https://myschool.instructure.com/courses/12 '), 'https://myschool.instructure.com');
+  assert.equal(canvasOrigin('nope'), '');
+  assert.equal(canvasOrigin(''), '');
+});

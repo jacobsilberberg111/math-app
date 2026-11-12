@@ -13,11 +13,31 @@
 //   MAX_BODY_MB            optional — largest request body accepted (default 40)
 //   RATE_LIMIT_PER_MINUTE  optional — requests per minute per client (default 60)
 //   ANTHROPIC_BASE_URL     optional — upstream override (used by the tests)
+//   CANVAS_URL             optional — your school's Canvas address, e.g. myschool.instructure.com
+//   CANVAS_TOKEN           optional — a Canvas access token (Canvas → Account → Settings → New Access Token)
+//
+// With CANVAS_URL and CANVAS_TOKEN set, the app's Home study agent can read Canvas through
+// GET /canvas/api/v1/… (read-only: GET requests to Canvas's API only) and download course files
+// through GET /canvas/file?url=…. The Canvas token stays on the server, like the Claude key.
 
 import http from 'node:http';
 import { Readable, Transform } from 'node:stream';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+
+/** "myschool.instructure.com" or "https://myschool.instructure.com/courses/1" → origin. */
+export function canvasOrigin(input) {
+  let t = (input || '').trim();
+  if (!t) return '';
+  if (!/^https?:\/\//i.test(t)) t = 'https://' + t;
+  try {
+    const u = new URL(t);
+    if (!u.hostname.includes('.') && u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') return '';
+    return u.origin;
+  } catch {
+    return '';
+  }
+}
 
 export function loadConfig(env = process.env) {
   return {
@@ -28,7 +48,102 @@ export function loadConfig(env = process.env) {
     maxBodyBytes: Math.max(1, Number(env.MAX_BODY_MB || 40)) * 1024 * 1024,
     rateLimitPerMinute: Math.max(1, Number(env.RATE_LIMIT_PER_MINUTE || 60)),
     allowedModels: (env.ALLOWED_MODELS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    canvasOrigin: canvasOrigin(env.CANVAS_URL),
+    canvasToken: (env.CANVAS_TOKEN || '').trim(),
   };
+}
+
+const CANVAS_FILE_LIMIT = 30 * 1024 * 1024;
+
+/**
+ * Read-only Canvas proxy. Only GET, only Canvas's /api/v1 (and file downloads from the same
+ * Canvas site). Link headers are rewritten to point back at this server so the app can page.
+ */
+async function handleCanvas(req, res, url, config) {
+  if (req.method !== 'GET') return apiError(res, 405, 'invalid_request_error', 'Canvas access is read-only.');
+  const ready = Boolean(config.canvasOrigin && config.canvasToken);
+  if (url.pathname === '/canvas/status') {
+    return sendJSON(res, 200, { configured: ready, host: ready ? new URL(config.canvasOrigin).host : null });
+  }
+  if (!ready) {
+    return apiError(res, 503, 'canvas_not_configured', 'Canvas is not set up on the server: add CANVAS_URL and CANVAS_TOKEN to the service variables.');
+  }
+
+  let target;
+  let isFile = false;
+  if (url.pathname === '/canvas/file') {
+    // A file's download URL as Canvas gave it (same Canvas site only).
+    let fileURL;
+    try { fileURL = new URL(url.searchParams.get('url') || '', config.canvasOrigin); } catch {
+      return apiError(res, 400, 'invalid_request_error', 'Bad file URL.');
+    }
+    if (fileURL.origin !== config.canvasOrigin || !/\/files\/\d+/.test(fileURL.pathname)) {
+      return apiError(res, 400, 'invalid_request_error', 'Only files on your Canvas site can be fetched.');
+    }
+    target = fileURL;
+    isFile = true;
+  } else {
+    const rest = url.pathname.slice('/canvas'.length);
+    if (!rest.startsWith('/api/v1/') || rest.includes('..')) {
+      return apiError(res, 404, 'not_found_error', 'Only Canvas API paths (/canvas/api/v1/…) are available.');
+    }
+    target = new URL(rest + url.search, config.canvasOrigin);
+  }
+
+  const controller = new AbortController();
+  res.on('close', () => { if (!res.writableFinished) controller.abort(); });
+  let upstream;
+  try {
+    upstream = await fetch(target, {
+      method: 'GET',
+      headers: { authorization: `Bearer ${config.canvasToken}`, accept: isFile ? '*/*' : 'application/json' },
+      // Follow redirects ourselves so the token never goes to a file host on another domain.
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    for (let hops = 0; isFile && upstream.status >= 300 && upstream.status < 400 && hops < 5; hops++) {
+      const next = new URL(upstream.headers.get('location') || '', target);
+      const sameSite = next.origin === config.canvasOrigin;
+      upstream = await fetch(next, {
+        method: 'GET',
+        headers: sameSite ? { authorization: `Bearer ${config.canvasToken}` } : {},
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+      target = next;
+    }
+  } catch (err) {
+    if (controller.signal.aborted) return res.destroy();
+    console.error(`canvas error: ${err.message}`);
+    return apiError(res, 502, 'api_error', 'Could not reach Canvas.');
+  }
+
+  const headers = { 'content-type': upstream.headers.get('content-type') || 'application/octet-stream' };
+  const link = upstream.headers.get('link');
+  if (link) {
+    // <https://school.instructure.com/api/v1/courses?page=2>; rel="next" → </canvas/api/v1/courses?page=2>
+    headers.link = link.replace(/<([^>]+)>/g, (m, href) => {
+      try {
+        const u = new URL(href);
+        return u.origin === config.canvasOrigin ? `</canvas${u.pathname}${u.search}>` : '';
+      } catch { return ''; }
+    });
+  }
+  const length = Number(upstream.headers.get('content-length') || 0);
+  if (isFile && length > CANVAS_FILE_LIMIT) {
+    return apiError(res, 413, 'request_too_large', 'That file is too big.');
+  }
+  if (length) headers['content-length'] = String(length);
+  res.writeHead(upstream.status >= 300 && upstream.status < 400 ? 502 : upstream.status, headers);
+  if (!upstream.body) return res.end();
+  let sent = 0;
+  const stream = Readable.fromWeb(upstream.body);
+  stream.on('data', (chunk) => {
+    sent += chunk.length;
+    if (isFile && sent > CANVAS_FILE_LIMIT) { stream.destroy(); res.destroy(); }
+  });
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
 }
 
 const ROUTES = {
@@ -147,8 +262,21 @@ export function createProxyServer(config = loadConfig()) {
         ok: true,
         configured,
         service: 'margin-server',
+        canvas: Boolean(config.canvasOrigin && config.canvasToken),
         ...(configured ? {} : { problem: 'Set ANTHROPIC_API_KEY and APP_TOKEN in the service variables.' }),
       });
+    }
+
+    if (url.pathname === '/canvas' || url.pathname.startsWith('/canvas/')) {
+      if (!config.appToken) return apiError(res, 503, 'api_error', 'Server is not configured: set APP_TOKEN.');
+      if (!tokensMatch(presentedToken(req), config.appToken)) {
+        return apiError(res, 401, 'authentication_error', 'Missing or invalid app token.');
+      }
+      const limited = rateLimit(clientKey(req));
+      if (!limited.ok) {
+        return apiError(res, 429, 'rate_limit_error', 'Too many requests to the tutor server.', { 'retry-after': String(limited.retryAfter) });
+      }
+      return handleCanvas(req, res, url, config);
     }
 
     const route = ROUTES[routeKey];
