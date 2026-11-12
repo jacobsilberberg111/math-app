@@ -101,13 +101,15 @@ struct HomeAgentChat: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // Rows get an explicit width so nothing in them can stretch the column past the sheet.
                 GeometryReader { geo in
+                let rowWidth = max(200, geo.size.width - 40)
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
-                            if agent.chat.isEmpty { intro }
+                        VStack(alignment: .leading, spacing: 14) {
+                            if agent.chat.isEmpty { intro.frame(width: rowWidth, alignment: .leading) }
                             ForEach(agent.chat) { item in
-                                HomeAgentRow(item: item, retry: { agent.retry() }, canRetry: agent.lastErrorRetryable && item.id == agent.chat.last?.id)
+                                HomeAgentRow(item: item, width: rowWidth, retry: { agent.retry() }, canRetry: agent.lastErrorRetryable && item.id == agent.chat.last?.id)
                                     .id(item.id)
                             }
                             if agent.isBusy, let status = agent.statusText {
@@ -117,8 +119,9 @@ struct HomeAgentChat: View {
                                     .id("status")
                             }
                         }
-                        .frame(width: max(0, geo.size.width - 32), alignment: .leading)
-                        .padding(16)
+                        .frame(width: rowWidth, alignment: .leading)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
                     }
                     .scrollDismissesKeyboard(.interactively)
                     .onChange(of: agent.chat.last?.text) { _, _ in scrollToEnd(proxy) }
@@ -203,6 +206,7 @@ struct HomeAgentChat: View {
 
 private struct HomeAgentRow: View {
     let item: ChatItem
+    let width: CGFloat
     var retry: () -> Void
     var canRetry: Bool
     @EnvironmentObject var settings: AppSettings
@@ -212,20 +216,22 @@ private struct HomeAgentRow: View {
         switch item.role {
         case .student:
             HStack {
-                Spacer(minLength: 60)
+                Spacer(minLength: 0)
                 Text(item.text)
                     .font(.system(size: 15))
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: width * 0.78 - 26, alignment: .leading)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
                     .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(hex: settings.tutorInkHex).opacity(0.14)))
                     .textSelection(.enabled)
             }
+            .frame(width: width, alignment: .trailing)
         case .notice, .observer:
             Label(item.text, systemImage: "info.circle")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
+                .frame(width: width)
         case .tutor:
             HStack(alignment: .top, spacing: 10) {
                 TutorOrb(active: item.isStreaming, size: 24).padding(.top, 2)
@@ -252,7 +258,7 @@ private struct HomeAgentRow: View {
                     }
                     if !item.text.trimmed.isEmpty {
                         RichTextView(text: item.text, fontSize: 15)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(width: width - 34, alignment: .leading)
                     } else if item.isStreaming && item.actions.isEmpty {
                         TypingDots()
                     }
@@ -265,8 +271,9 @@ private struct HomeAgentRow: View {
                         }
                     }
                 }
-                Spacer(minLength: 0)
+                .frame(width: width - 34, alignment: .leading)
             }
+            .frame(width: width, alignment: .leading)
         }
     }
 }

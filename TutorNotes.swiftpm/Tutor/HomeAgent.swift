@@ -447,7 +447,8 @@ struct HomeAgentExecutor {
             let horizon = now.addingTimeInterval(days * 86_400)
             let names = Dictionary(((try? await courses(c)) ?? []).map { ($0.id, $0.name ?? "") }, uniquingKeysWith: { a, _ in a })
             var out: [String] = []
-            let todo = (try? await c.todo()) ?? []
+            // The to-do list must work (it surfaces "Canvas isn't set up" and token problems); the rest is best-effort.
+            let todo = try await c.todo()
             let upcoming = todo.compactMap { item -> CanvasAssignment? in
                 guard var a = item.assignment else { return nil }
                 if a.courseID == nil { a.courseID = item.courseID }
