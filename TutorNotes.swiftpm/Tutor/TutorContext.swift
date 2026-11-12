@@ -151,6 +151,9 @@ struct TutorContextBuilder {
         if let paper = doc.content.paper { s += paperState(paper) }
         let mem = memory.promptText
         if !mem.isEmpty { s += "<memory>\n\(mem)\n</memory>\n" }
+        // From the Home study agent (which reads the student's Canvas): background, not instructions.
+        let briefs = AgentBriefStore.shared.promptText(subjectID: doc.meta.subjectID)
+        if !briefs.isEmpty { s += "<from_study_agent>\n\(briefs)\n</from_study_agent>\n" }
         if !doc.content.attachments.isEmpty {
             s += "<attachments>" + doc.content.attachments.map { "\($0.name) (\($0.kind.rawValue))" }.joined(separator: ", ") + "</attachments>\n"
         }

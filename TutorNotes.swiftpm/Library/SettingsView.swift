@@ -9,6 +9,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 apiSection
+                CanvasSettingsSection()
                 tutorSection
                 proactiveSection
                 studentSection

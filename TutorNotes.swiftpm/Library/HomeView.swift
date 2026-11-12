@@ -18,6 +18,8 @@ struct HomeView: View {
     var showSubject: (UUID) -> Void
     var quizMe: (Subject) -> Void = { _ in }
     var planRevision: (Subject) -> Void = { _ in }
+    /// The study agent opening a new note (subject, title, tutor job, what the student sees).
+    var startAgentNote: (UUID?, String, String, String) -> Void = { _, _, _, _ in }
 
     private var study: StudyStore { StudyStore.shared }
 
@@ -41,6 +43,7 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 summary
+                HomeAgentCard(startNote: startAgentNote)
                 if !upcomingExams.isEmpty {
                     section("Exams coming up") {
                         VStack(spacing: 0) {

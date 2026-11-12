@@ -197,6 +197,12 @@ final class AppSettings: ObservableObject {
         hasSeenOnboarding = d.bool(forKey: "hasSeenOnboarding")
     }
 
+    /// Canvas goes through the tutor server, which holds CANVAS_URL and CANVAS_TOKEN.
+    var canvasClient: CanvasClient? {
+        guard connection == .server, let url = normalizedServerURL, !serverToken.trimmed.isEmpty else { return nil }
+        return CanvasClient(serverURL: url, appToken: serverToken.trimmed)
+    }
+
     /// The tutor server's base URL, accepting input with or without a scheme.
     var normalizedServerURL: URL? {
         var t = serverURL.trimmed

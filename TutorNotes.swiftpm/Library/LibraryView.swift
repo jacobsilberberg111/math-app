@@ -68,7 +68,7 @@ struct LibraryView: View {
                                  reviewCards: { showFlashcards = true },
                                  practiseWeakSpots: practiseWeakSpots,
                                  showAll: { selection = .all }, showSubject: { selection = .subject($0) },
-                                 quizMe: quizMe, planRevision: planRevision)
+                                 quizMe: quizMe, planRevision: planRevision, startAgentNote: startAgentNote)
                     } else {
                         grid
                     }
@@ -329,6 +329,14 @@ struct LibraryView: View {
     // MARK: Studying a subject
 
     /// A fresh note where the tutor sets questions from what's in the subject's notes.
+    /// A note the Home study agent set up: its tutor starts on the agent's brief.
+    private func startAgentNote(_ subjectID: UUID?, _ title: String, _ prompt: String, _ display: String) {
+        let pattern = subjectID.flatMap { library.subject($0) }.flatMap { PaperPattern(rawValue: $0.profile.defaultPattern) } ?? .ruled
+        let meta = library.createNote(title: title, subjectID: subjectID, paper: PaperStyle(pattern: pattern, color: settings.defaultPaperColor))
+        startRequest = (meta.id, EditorStartRequest(prompt: prompt, displayText: display))
+        open(meta)
+    }
+
     private func quizMe(_ subject: Subject) {
         let digest = library.notesDigest(subjectID: subject.id)
         let meta = library.createNote(title: "Quiz · \(subject.name) · \(LibraryView.stamp)", subjectID: subject.id,

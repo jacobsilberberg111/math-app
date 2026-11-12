@@ -64,6 +64,28 @@ Each subject has a **kind**: Maths, Science, English, Geography, History, Comput
 - **Blurt:** a blank page where you write everything you remember, then tap **Check my blurt**. The tutor ticks what's right, corrects what's wrong, and lists what you missed compared with your notes.
 - **Plan revision:** a day-by-day plan up to the exam (or for two weeks) built from your notes' topics, with short active tasks and spaced repeats.
 
+## Study agent and Canvas
+
+Home has a **Study agent**: a chat that plans with you across all your subjects and reads your school's **Canvas**. Ask "What's due this week?", "Anything new from my teachers?", "How am I going?", or "Help me start my next assessment". It can:
+
+- **Read Canvas (read-only):** your courses and current grades, what's due and overdue, assignments with their descriptions and rubrics, announcements, modules and pages, files (assessment notifications and worksheets as PDFs or images), marked work with teacher comments, and your inbox. It can't submit, post or change anything.
+- **Work with the note tutors:**
+  - **share_with_tutors** passes a short brief (an assessment's task and criteria, a pattern in teacher feedback) to every tutor, or to one subject's tutors. They see it in each turn as `<from_study_agent>`. You can review and delete briefs in Settings → Canvas.
+  - **start_study_note** creates a note and opens it with its tutor already working on a detailed job the agent wrote.
+  - It can also set a subject's exam date (Home shows the countdown) and remember things about you.
+
+**Setting up Canvas.** The Canvas token lives on the tutor server, like the Claude key:
+1. In Canvas, go to **Account → Settings → + New Access Token** and copy the token.
+2. In Railway, add these to the **tutor-server** service's Variables:
+   - `CANVAS_URL`: your school's Canvas address, for example `myschool.instructure.com`.
+   - `CANVAS_TOKEN`: the token.
+3. In the app, check it with **Settings → Canvas → Test Canvas connection**.
+
+How the server handles Canvas:
+- Requests go through `GET /canvas/api/v1/…`, which only allows GET requests to Canvas's API.
+- Files download through `GET /canvas/file`, which follows Canvas's redirect without sending the token to the file host.
+- `/canvas/status` reports whether Canvas is set up.
+
 ## Calculator (maths)
 
 Maths notes have a calculator button in the toolbar (also **+ → Calculator**, and under **More Tools** in any note). It's an on-screen replica of the **Casio fx-82AU PLUS II**, the calculator NSW students use, built from Casio's manual so it behaves like the one you'll have in the exam:
