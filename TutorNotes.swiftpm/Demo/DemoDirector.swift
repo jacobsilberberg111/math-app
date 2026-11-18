@@ -72,14 +72,30 @@ final class DemoDirector {
                 }
             }
         }
+        // -uitest-tutor-message "…": ask the note's tutor something once it opens (speed and cost checks).
+        let args = DemoDirector.arguments
+        if !sentTutorMessage, let i = args.firstIndex(of: "-uitest-tutor-message"), i + 1 < args.count {
+            sentTutorMessage = true
+            model.showTutor = true
+            let text = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { model.tutor.send(text) }
+        }
         if let c = editorContinuation {
             editorContinuation = nil
             c.resume(returning: model)
         }
     }
 
+    private var sentTutorMessage = false
+
+    /// The note to open with -uitest-open-first-note: -uitest-open-note-id <uuid> if given, else the welcome note.
     private func welcomeNote() -> NoteMeta? {
         guard let library else { return nil }
+        let args = DemoDirector.arguments
+        if let i = args.firstIndex(of: "-uitest-open-note-id"), i + 1 < args.count,
+           let note = library.notes.first(where: { $0.id.uuidString == args[i + 1] }) {
+            return note
+        }
         return library.notes.first { $0.title.hasPrefix("Welcome") } ?? library.notes.first
     }
 

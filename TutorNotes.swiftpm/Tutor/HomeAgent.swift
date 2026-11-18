@@ -181,18 +181,10 @@ final class HomeAgent {
         }
     }
 
-    /// Keeps the conversation a reasonable size: drops the oldest exchanges, cutting only at a
-    /// message the student typed (so tool calls stay paired with their results).
+    /// Keeps the conversation small (Canvas pages and files make big tool results): past about
+    /// 30k tokens the oldest exchanges become a short recap, with any read files carried forward.
     private func trimHistory() {
-        guard apiMessages.count > 70 else { return }
-        var cut = apiMessages.count - 50
-        while cut < apiMessages.count {
-            let m = apiMessages[cut]
-            let isTyped = m["role"]?.stringValue == "user" && (m["content"]?.arrayValue ?? []).allSatisfy { $0["type"]?.stringValue == "text" }
-            if isTyped { break }
-            cut += 1
-        }
-        apiMessages.removeFirst(min(cut, apiMessages.count))
+        if let smaller = HistoryPruning.compacted(apiMessages) { apiMessages = smaller }
     }
 
     /// Per-turn context (kept out of the system prompt so that stays cached).
@@ -244,12 +236,12 @@ final class HomeAgent {
             "model": .string(settings.tutorModel),
             "max_tokens": 16000,
             "stream": true,
-            "system": [["type": "text", "text": .string(HomeAgentPrompts.system), "cache_control": ["type": "ephemeral"]]],
+            "system": [["type": "text", "text": .string(HomeAgentPrompts.system), "cache_control": ["type": "ephemeral", "ttl": "1h"]]],
             "tools": HomeAgentPrompts.tools,
             "tool_choice": ["type": "auto"],
             "thinking": ["type": "adaptive", "display": "summarized"],
             "output_config": ["effort": .string(settings.effort.rawValue)],
-            "cache_control": ["type": "ephemeral"],
+            "cache_control": ["type": "ephemeral", "ttl": "1h"],
             "messages": .array(apiMessages),
         ]
         return (.object(body), [])

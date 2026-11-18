@@ -392,10 +392,24 @@ final class CanvasActionExecutor {
     // MARK: Execute
 
     /// Tools that wait on the network or on running code. They run through `perform`.
-    static let asyncTools: Set<String> = ["map", "chart", "climate_graph", "code", "run_code", "find_diagram"]
+    static let asyncTools: Set<String> = ["map", "chart", "climate_graph", "code", "run_code", "find_diagram", "read_attachment"]
 
     /// Runs any tool call: the async tools (data downloads, running code) are awaited, the rest
     /// run straight away through `execute`.
+    /// Searches or reads pages of a big attached PDF (see AttachmentReader).
+    func readAttachmentTool(_ args: ToolArgs) async throws -> Outcome {
+        let pdfs = document.content.attachments.filter { $0.kind == .pdf }
+        guard !pdfs.isEmpty else { throw ToolInputError(message: "This note has no PDF attachments.") }
+        let wanted = args.string("attachment")
+        let match = wanted.flatMap { w in pdfs.first { $0.id == w || $0.name.localizedCaseInsensitiveContains(w) } }
+        guard let a = match ?? (pdfs.count == 1 ? pdfs[0] : nil) else {
+            throw ToolInputError(message: "Which attachment? " + pdfs.map(\.name).joined(separator: ", "))
+        }
+        let r = try await AttachmentReader.read(url: document.assetURL(a.localFile), name: a.name, pages: args.string("pages"),
+                                                query: args.string("query"), images: args.bool("images") ?? false)
+        return Outcome(result: r.text, isError: false, action: ChatAction(symbol: "doc.text.magnifyingglass", summary: "Read \(a.name)"), images: r.images)
+    }
+
     func perform(toolID: String, name: String, input: JSONValue) async -> Outcome {
         guard CanvasActionExecutor.asyncTools.contains(name) else { return execute(toolID: toolID, name: name, input: input) }
         if !allowsStudyTools {
@@ -410,6 +424,7 @@ final class CanvasActionExecutor {
             case "code": return try await codeTool(args)
             case "run_code": return try await runCodeTool(args)
             case "find_diagram": return try await findDiagramTool(args)
+            case "read_attachment": return try await readAttachmentTool(args)
             default: return Outcome(result: "Unknown tool \(name).", isError: true, action: nil)
             }
         } catch let e as ToolInputError {

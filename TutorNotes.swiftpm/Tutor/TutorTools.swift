@@ -34,7 +34,17 @@ enum TutorTools {
     static let color: JSONValue = ["type": "string", "enum": colorEnum, "description": "Ink colour."]
 
     /// Every tool, in a fixed order: the canvas tools, then the subject tools.
-    static let definitions: JSONValue = .array(coreDefinitions + GeoTools.definitions + DiagramTools.definitions + CodeTools.definitions)
+    static let definitions: JSONValue = .array(coreDefinitions + GeoTools.definitions + DiagramTools.definitions + CodeTools.definitions + [readAttachment])
+
+    /// For big PDFs the student attached (slide decks, books), which aren't sent whole.
+    static let readAttachment: JSONValue = tool("read_attachment",
+        "Read a PDF the student attached that was too big to include (you'll have been told its name). With no pages or query you get the first line of every page (slide titles), to find your way around. With a query you get the pages that mention it, with snippets. With pages (e.g. \"12\", \"12-15\", \"3, 9\"; up to 6) you get their text, plus pictures of up to 3 of them when images is true or a page is mostly pictures. Read only what you need.",
+        object([
+            ("attachment", prop("string", "The file's name (or part of it). Optional when there's only one PDF.")),
+            ("query", prop("string", "Words to search for.")),
+            ("pages", prop("string", "Page numbers to read, e.g. \"12-15\".")),
+            ("images", prop("boolean", "Also send pictures of the pages (for diagrams, charts, slides with pictures). Default false.")),
+        ], required: []))
 
     static let coreDefinitions: [JSONValue] = [
         tool("write",

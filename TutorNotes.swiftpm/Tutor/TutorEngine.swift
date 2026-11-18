@@ -79,6 +79,13 @@ final class TutorEngine {
         observerExecutor.allowsStudyTools = false
         load()
         startStuckWatcher()
+        // Read big PDFs' pages (with text recognition for picture-only slides) ahead of time.
+        for att in document.content.attachments where att.kind == .pdf {
+            let url = document.assetURL(att.localFile)
+            if AttachmentReader.isLarge(att, url: url) {
+                Task.detached(priority: .utility) { _ = await AttachmentIndex.shared.texts(for: url) }
+            }
+        }
     }
 
     var sessionURL: URL { document.folder.appendingPathComponent("tutor.json") }
@@ -305,8 +312,9 @@ final class TutorEngine {
         canvas?.setTutorActivity(focusDoc.map { .looking($0) } ?? .thinking(nil))
         executor.beginTurn(focus: focusDoc)
         let generation = sessionGeneration
-        if userContent != nil, let pruned = HistoryPruning.pruned(apiMessages) {
-            apiMessages = pruned
+        if userContent != nil {
+            dropLargeAttachmentsFromHistory()
+            if let smaller = HistoryPruning.optimized(apiMessages) { apiMessages = smaller }
         }
         let startCount = apiMessages.count
         if let userContent {
@@ -422,13 +430,13 @@ final class TutorEngine {
             "stream": true,
             // The shared base prompt is cached across every note and subject; the subject's
             // guidance follows it and is cached per conversation.
-            "system": [["type": "text", "text": .string(TutorPrompts.system), "cache_control": ["type": "ephemeral"]],
+            "system": [["type": "text", "text": .string(TutorPrompts.system), "cache_control": ["type": "ephemeral", "ttl": "1h"]],
                        ["type": "text", "text": .string(conversationGuidance())]],
             "tools": TutorTools.definitions,
             "tool_choice": ["type": "auto"],
             "thinking": ["type": "adaptive", "display": "summarized"],
             "output_config": ["effort": .string(effort.rawValue)],
-            "cache_control": ["type": "ephemeral"],
+            "cache_control": ["type": "ephemeral", "ttl": "1h"],
             "messages": .array(messages),
         ]
         var betas: [String] = []
@@ -654,6 +662,7 @@ final class TutorEngine {
         case "flowchart": return "Drawing a flowchart…"
         case "label_diagram": return "Labelling the diagram…"
         case "find_diagram": return "Finding a diagram…"
+        case "read_attachment": return "Reading the attachment…"
         case "code": return "Writing code…"
         case "run_code": return "Running the code…"
         default: return "Working on the page…"
@@ -662,9 +671,48 @@ final class TutorEngine {
 
     // MARK: Attachments
 
+    /// Conversations from before big PDFs were read on demand still include them as documents:
+    /// swap those for the note saying they can be read with read_attachment.
+    private func dropLargeAttachmentsFromHistory() {
+        var notes: [String: String] = [:]
+        for a in document.content.attachments {
+            guard let id = a.remoteFileID else { continue }
+            let url = document.assetURL(a.localFile)
+            if AttachmentReader.isLarge(a, url: url) {
+                notes[id] = AttachmentReader.note(for: a, pages: AttachmentReader.pageCount(url))
+            }
+        }
+        guard !notes.isEmpty else { return }
+        var changed = false
+        func swap(_ v: JSONValue) -> JSONValue {
+            switch v {
+            case .object(let o):
+                if o["type"]?.stringValue == "document", let id = o["source"]?["file_id"]?.stringValue, let note = notes[id] {
+                    changed = true
+                    return ["type": "text", "text": .string(note)]
+                }
+                var out: [String: JSONValue] = [:]
+                for (k, x) in o { out[k] = swap(x) }
+                return .object(out)
+            case .array(let a):
+                return .array(a.map(swap))
+            default:
+                return v
+            }
+        }
+        let updated = apiMessages.map(swap)
+        if changed { apiMessages = updated }
+    }
+
     private func attachmentBlocks(_ items: [TutorAttachment]) -> [JSONValue] {
         var out: [JSONValue] = []
         for a in items {
+            // Big reference PDFs are read on demand (read_attachment), not resent every turn.
+            let url = document.assetURL(a.localFile)
+            if AttachmentReader.isLarge(a, url: url) {
+                out.append(TutorContextBuilder.text(AttachmentReader.note(for: a, pages: AttachmentReader.pageCount(url))))
+                continue
+            }
             if let block = attachmentBlock(a) {
                 switch a.role {
                 case .paper:
