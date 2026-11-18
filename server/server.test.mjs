@@ -325,3 +325,16 @@ test('canvasOrigin cleans up addresses', async () => {
   assert.equal(canvasOrigin('nope'), '');
   assert.equal(canvasOrigin(''), '');
 });
+
+test('usage meter reads token counts from a streamed response, even split across chunks', async () => {
+  const { createUsageMeter } = await import('./server.mjs');
+  const u = createUsageMeter();
+  const sse = 'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":12,"cache_creation_input_tokens":3400,"cache_read_input_tokens":98765,"output_tokens":1}}}\n\n'
+    + 'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":512}}\n\n';
+  const cut = sse.indexOf('987') + 2; // split inside a number
+  u.scan(Buffer.from(sse.slice(0, cut)));
+  u.scan(Buffer.from(sse.slice(cut)));
+  assert.deepEqual(u.values, { input_tokens: 12, cache_read_input_tokens: 98765, cache_creation_input_tokens: 3400, output_tokens: 512 });
+  assert.equal(u.summary(), ' in=12 cache_read=98765 cache_write=3400 out=512');
+  assert.equal(createUsageMeter().summary(), '');
+});

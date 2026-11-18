@@ -242,6 +242,39 @@ function limitedStream(req, limit, onTooLarge) {
   return Readable.toWeb(req.pipe(counter));
 }
 
+/**
+ * Reads token usage out of a Messages response as it streams past (message_start carries the
+ * input and cache figures, message_delta the final output count), for the log line. Watching
+ * real usage per request is how you spot a conversation getting expensive.
+ */
+export function createUsageMeter() {
+  const fields = {
+    input_tokens: 'in',
+    cache_read_input_tokens: 'cache_read',
+    cache_creation_input_tokens: 'cache_write',
+    output_tokens: 'out',
+  };
+  const seen = {};
+  let tail = '';
+  return {
+    scan(chunk) {
+      const text = tail + chunk.toString('utf8');
+      for (const [field] of Object.entries(fields)) {
+        const re = new RegExp(`"${field}"\\s*:\\s*(\\d+)`, 'g');
+        let m;
+        while ((m = re.exec(text))) seen[field] = Math.max(seen[field] || 0, Number(m[1]));
+      }
+      // Keep the end in case a number is split across chunks.
+      tail = text.slice(-200);
+    },
+    summary() {
+      const parts = Object.entries(fields).filter(([f]) => seen[f] !== undefined).map(([f, short]) => `${short}=${seen[f]}`);
+      return parts.length ? ' ' + parts.join(' ') : '';
+    },
+    get values() { return { ...seen }; },
+  };
+}
+
 export function createProxyServer(config = loadConfig()) {
   const rateLimit = createRateLimiter(config.rateLimitPerMinute);
   const configured = Boolean(config.apiKey && config.appToken);
@@ -251,11 +284,15 @@ export function createProxyServer(config = loadConfig()) {
     const url = new URL(req.url || '/', 'http://localhost');
     const routeKey = `${req.method} ${url.pathname}`;
     let model = '-';
-    res.on('finish', () => {
+    const usage = createUsageMeter();
+    const logLine = (note = '') => {
       if (url.pathname !== '/health') {
-        console.log(`${req.method} ${url.pathname} ${res.statusCode} ${Date.now() - started}ms model=${model}`);
+        console.log(`${req.method} ${url.pathname} ${res.statusCode} ${Date.now() - started}ms model=${model}${usage.summary()}${note}`);
       }
-    });
+    };
+    res.on('finish', () => logLine());
+    // A request the app gave up on still gets a line, so slow requests show up.
+    res.on('close', () => { if (!res.writableFinished) logLine(' (client closed)'); });
 
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
       return sendJSON(res, 200, {
@@ -367,6 +404,7 @@ export function createProxyServer(config = loadConfig()) {
     if (!upstream.body) return res.end();
     const stream = Readable.fromWeb(upstream.body);
     stream.on('error', () => res.destroy());
+    if (url.pathname === '/v1/messages') stream.on('data', (chunk) => usage.scan(chunk));
     stream.pipe(res);
   });
 }
