@@ -10,6 +10,6 @@ APP=TutorNotes.swiftpm
 OUT="$(mktemp -d)/core-tests"
 # Core/ holds Foundation-only code; CoreTests/*Tests.swift are the per-area test files.
 swiftc -swift-version 5 -O -o "$OUT" CoreTests/main.swift CoreTests/*Tests.swift "$APP"/Core/*.swift \
-  "$APP/Tutor/JSON.swift" "$APP/Math/Expression.swift" "$APP/Math/MathParser.swift" \
+  "$APP/Tutor/JSON.swift" "$APP/Tutor/HistoryPruning.swift" "$APP/Math/Expression.swift" "$APP/Math/MathParser.swift" \
   "$APP/Canvas/ShapeRecognizer.swift" "$APP/Model/StudyCore.swift" "$APP/Math/GeometryLayout.swift"
 "$OUT"

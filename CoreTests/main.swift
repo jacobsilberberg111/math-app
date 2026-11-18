@@ -287,6 +287,7 @@ runDiagramTests()
 runPalmTests()
 runCalculatorTests()
 runCanvasTests()
+runHistoryTests()
 
 print("passes: \(passes), failures: \(failures)")
 exit(failures == 0 ? 0 : 1)

@@ -305,6 +305,9 @@ final class TutorEngine {
         canvas?.setTutorActivity(focusDoc.map { .looking($0) } ?? .thinking(nil))
         executor.beginTurn(focus: focusDoc)
         let generation = sessionGeneration
+        if userContent != nil, let pruned = HistoryPruning.pruned(apiMessages) {
+            apiMessages = pruned
+        }
         let startCount = apiMessages.count
         if let userContent {
             apiMessages.append(["role": "user", "content": .array(userContent)])
