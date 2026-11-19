@@ -12,7 +12,14 @@ enum RecognizedShape: Equatable {
     var name: String {
         switch self {
         case .line: return "Line"
-        case .polygon(let pts): return pts.count == 3 ? "Triangle" : (pts.count == 4 ? "Rectangle" : "Polygon")
+        case .polygon(let pts):
+            switch pts.count {
+            case 3: return "Triangle"
+            case 4: return ShapeGeometry.isSquare(pts) ? "Square" : (ShapeGeometry.isRectangle(pts) ? "Rectangle" : "Quadrilateral")
+            case 5: return "Pentagon"
+            case 6: return "Hexagon"
+            default: return "Polygon"
+            }
         case .ellipse(_, let rx, let ry, _): return abs(rx - ry) < 0.5 ? "Circle" : "Ellipse"
         }
     }
@@ -69,9 +76,14 @@ enum RecognizedShape: Equatable {
         case .line: return self
         case .polygon(let pts): return .polygon(pts.map(map))
         case .ellipse(let c, let rx, let ry, let rot):
-            let isCircle = abs(rx - ry) < 0.5
-            let s = isCircle ? max(abs(sx), abs(sy)) : 1
-            return .ellipse(center: map(c), rx: isCircle ? rx * s : rx * abs(sx), ry: isCircle ? ry * s : ry * abs(sy), rotation: rot)
+            if abs(rx - ry) < 0.5 {
+                // One scale for both axes, so the circle grows from its anchor corner without drifting.
+                let m = max(abs(sx), abs(sy))
+                let ux = sx < 0 ? -m : m, uy = sy < 0 ? -m : m
+                let center = CGPoint(x: anchor.x + (c.x - anchor.x) * ux, y: anchor.y + (c.y - anchor.y) * uy)
+                return .ellipse(center: center, rx: rx * m, ry: ry * m, rotation: rot)
+            }
+            return .ellipse(center: map(c), rx: rx * abs(sx), ry: ry * abs(sy), rotation: rot)
         }
     }
 }
@@ -109,21 +121,63 @@ enum ShapeRecognizer {
         let polygon = fitPolygon(loop, diag: diag)
 
         var bestPolygon: RecognizedShape?
-        if let polygon, polygon.vertices.count == 3 || polygon.vertices.count == 4 {
-            if polygon.vertices.count == 4, let rect = rectangle(from: polygon.vertices) {
-                bestPolygon = .polygon(rect)
-            } else {
-                bestPolygon = .polygon(polygon.vertices)
+        if let polygon, (3...6).contains(polygon.vertices.count) {
+            switch polygon.vertices.count {
+            case 3: bestPolygon = .polygon(tidyTriangle(polygon.vertices))
+            case 4:
+                if let rect = rectangle(from: polygon.vertices) {
+                    bestPolygon = .polygon(ShapeGeometry.squaredIfClose(rect))
+                } else {
+                    bestPolygon = .polygon(polygon.vertices)
+                }
+            default: bestPolygon = .polygon(regularIfClose(polygon.vertices))
             }
         }
 
-        if let polygon, let bestPolygon, polygon.error < ellipse.error * 0.9 {
+        // Pentagons and hexagons need clearer corners than triangles and quads before they win
+        // over an ellipse (a wobbly circle is not a hexagon).
+        let many = (polygon?.vertices.count ?? 0) >= 5
+        let margin: CGFloat = many ? 0.85 : 0.9
+        if let polygon, let bestPolygon, polygon.error < ellipse.error * margin, !many || ellipse.error > 0.035 {
             return bestPolygon
         }
         if ellipse.error < 0.12 {
             return ellipse.shape
         }
         return bestPolygon
+    }
+
+    // MARK: Tidying
+
+    /// A near-equilateral triangle becomes exactly equilateral (same centre and size).
+    static func tidyTriangle(_ t: [CGPoint]) -> [CGPoint] {
+        guard t.count == 3 else { return t }
+        let angles = (0..<3).map { ShapeGeometry.angleDegrees(t[($0 + 2) % 3], t[$0], t[($0 + 1) % 3]) }
+        guard angles.allSatisfy({ abs($0 - 60) < 9 }) else { return t }
+        return regular(t)
+    }
+
+    /// Five or six corners at nearly equal angles and sides become a regular polygon.
+    static func regularIfClose(_ v: [CGPoint]) -> [CGPoint] {
+        let n = v.count
+        let sides = (0..<n).map { hypot(v[($0 + 1) % n].x - v[$0].x, v[($0 + 1) % n].y - v[$0].y) }
+        guard let lo = sides.min(), let hi = sides.max(), lo > 0, hi / lo < 1.35 else { return v }
+        return regular(v)
+    }
+
+    /// The regular polygon with the same centre, mean radius and first-corner direction.
+    static func regular(_ v: [CGPoint]) -> [CGPoint] {
+        let n = CGFloat(v.count)
+        let c = CGPoint(x: v.reduce(0) { $0 + $1.x } / n, y: v.reduce(0) { $0 + $1.y } / n)
+        let r = v.reduce(0) { $0 + hypot($1.x - c.x, $1.y - c.y) } / n
+        let start = atan2(v[0].y - c.y, v[0].x - c.x)
+        // Keep the drawing direction.
+        let cross = (v[1].x - v[0].x) * (v[2].y - v[1].y) - (v[1].y - v[0].y) * (v[2].x - v[1].x)
+        let dir: CGFloat = cross >= 0 ? 1 : -1
+        return (0..<v.count).map { k in
+            let a = start + dir * 2 * .pi * CGFloat(k) / n
+            return CGPoint(x: c.x + r * cos(a), y: c.y + r * sin(a))
+        }
     }
 
     // MARK: Ellipse
@@ -382,18 +436,52 @@ enum ShapeGeometry {
         return acos(cosA) * 180 / .pi
     }
 
-    /// Snaps the direction a→b to horizontal/vertical/45° when within a few degrees.
+    /// Snaps the direction a→b to the nearest 15° (horizontal, vertical, 30°, 45°, 60°…) when
+    /// within a few degrees of it; horizontal and vertical pull a little harder.
     static func snapAngle(from a: CGPoint, to b: CGPoint) -> CGPoint {
         let dx = b.x - a.x, dy = b.y - a.y
         let len = hypot(dx, dy)
         guard len > 0 else { return b }
         let angle = atan2(dy, dx)
-        let step = CGFloat.pi / 4
+        let right = CGFloat.pi / 2
+        let axis = (angle / right).rounded() * right
+        if abs(angle - axis) < 6 * .pi / 180 {
+            return CGPoint(x: a.x + len * cos(axis), y: a.y + len * sin(axis))
+        }
+        let step = CGFloat.pi / 12
         let snapped = (angle / step).rounded() * step
-        if abs(angle - snapped) < 4 * .pi / 180 {
+        if abs(angle - snapped) < 3.5 * .pi / 180 {
             return CGPoint(x: a.x + len * cos(snapped), y: a.y + len * sin(snapped))
         }
         return b
+    }
+
+    /// A rectangle (corners in order) whose sides are within 10%.
+    static func isSquare(_ p: [CGPoint]) -> Bool {
+        guard p.count == 4, isRectangle(p) else { return false }
+        let a = hypot(p[1].x - p[0].x, p[1].y - p[0].y), b = hypot(p[2].x - p[1].x, p[2].y - p[1].y)
+        guard a > 0, b > 0 else { return false }
+        return max(a, b) / min(a, b) < 1.005
+    }
+
+    static func isRectangle(_ p: [CGPoint]) -> Bool {
+        guard p.count == 4 else { return false }
+        return (0..<4).allSatisfy { abs(angleDegrees(p[($0 + 3) % 4], p[$0], p[($0 + 1) % 4]) - 90) < 1 }
+    }
+
+    /// A rectangle whose sides are within 12% becomes a square about the same centre.
+    static func squaredIfClose(_ p: [CGPoint]) -> [CGPoint] {
+        guard p.count == 4 else { return p }
+        let a = hypot(p[1].x - p[0].x, p[1].y - p[0].y), b = hypot(p[2].x - p[1].x, p[2].y - p[1].y)
+        guard a > 0, b > 0, max(a, b) / min(a, b) < 1.12 else { return p }
+        let c = CGPoint(x: p.reduce(0) { $0 + $1.x } / 4, y: p.reduce(0) { $0 + $1.y } / 4)
+        let side = (a + b) / 2
+        let ux = CGPoint(x: (p[1].x - p[0].x) / a, y: (p[1].y - p[0].y) / a)
+        let uy = CGPoint(x: (p[3].x - p[0].x) / b, y: (p[3].y - p[0].y) / b)
+        let h = side / 2
+        return [(-1, -1), (1, -1), (1, 1), (-1, 1)].map { (i, j) in
+            CGPoint(x: c.x + CGFloat(i) * h * ux.x + CGFloat(j) * h * uy.x, y: c.y + CGFloat(i) * h * ux.y + CGFloat(j) * h * uy.y)
+        }
     }
 
     /// Evenly spaced points along a polyline; each vertex repeated `cornerRepeat` times.

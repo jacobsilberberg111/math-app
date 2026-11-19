@@ -18,20 +18,34 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     let overElements = PassthroughView()
     let chrome = PassthroughView()
 
-    var pageViews: [Int: PageBackgroundView] = [:]
+    /// Page backgrounds near the screen, by page id so they follow their page when pages are
+    /// added, removed or moved (see +Scroll).
+    var pageViews: [UUID: PageBackgroundView] = [:]
+    /// Page backgrounds that scrolled far away, kept for reuse instead of being rebuilt.
+    var pageViewPool: [PageBackgroundView] = []
     /// Freeform boards draw their background as tiles, keyed by row * 4096 + column.
     var boardTiles: [Int: PageBackgroundView] = [:]
     static let boardTileSize: CGFloat = 1024
+    /// Views only for elements near the screen (see +Scroll); far ones are dropped and rebuilt on return.
     var elementViews: [String: ElementView] = [:]
+    /// The visible rect element views were last culled for, and whether a cull is queued.
+    var elementCullRect: CGRect = .null
+    var elementCullScheduled = false
 
     private(set) var tool = CanvasToolConfig()
     var previousToolKind: CanvasToolKind = .pen
 
     private var lastLayoutWidth: CGFloat = 0
-    private var userHasZoomed = false
+    var userHasZoomed = false
     var isApplyingDrawing = false
-    private var lastReportedPage = -1
-    private var hasLaidOut = false
+    var lastReportedPage = -1
+    private(set) var hasLaidOut = false
+    /// The page at the top of the screen and how far down it the view starts, so the same place
+    /// stays in view when pages are added, removed or moved around it (see +Scroll).
+    var pageAnchor: (id: UUID, dy: CGFloat)?
+    var isRestoringPageAnchor = false
+    var lastScrollNotice = Date.distantPast
+    var appObservers: [NSObjectProtocol] = []
 
     // Input state (see +Input)
     var selectedElementID: String?
@@ -104,6 +118,10 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
 
     required init?(coder: NSCoder) { fatalError() }
 
+    deinit {
+        appObservers.forEach(NotificationCenter.default.removeObserver)
+    }
+
     /// Per-note undo stack shared by PencilKit and our element edits.
     override var undoManager: UndoManager? { document.undoManager }
 
@@ -164,6 +182,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         reloadPages()
         reloadAllElements()
         apply(tool: tool)
+        observeAppState()
     }
 
     override func viewDidLayoutSubviews() {
@@ -175,6 +194,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             let topDocY = visibleDocRect.minY
             // Reopening a note goes back to where the student was (and how far they'd zoomed).
             let remembered = hasLaidOut ? nil : CanvasPositionMemory.load(document.meta.id)
+            // Before zooming: the zoom moves the page too, and the jump logger reads this.
+            scrollReason = hasLaidOut ? "width changed to \(Int(width))" : "first layout"
             if let z = remembered?.zoom {
                 canvasView.setZoomScale(min(max(z, canvasView.minimumZoomScale), canvasView.maximumZoomScale), animated: false)
                 userHasZoomed = abs(zoom - fit) > 0.01
@@ -201,6 +222,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
             if hasLaidOut { scheduleRasterize() } else { rasterizeForCurrentZoom() }
             lastLayoutWidth = width
             hasLaidOut = true
+            updatePageAnchor()
         }
         layoutDocument()
         canvasView.sendSubviewToBack(underlay)
@@ -258,7 +280,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         }
         let inset = max(0, (canvasView.bounds.width - size.width * z) / 2)
         if abs(canvasView.contentInset.left - inset) > 0.5 {
-            canvasView.contentInset = UIEdgeInsets(top: 0, left: inset, bottom: 0, right: inset)
+            // The bottom inset belongs to the text editor (it keeps the box above the keyboard).
+            canvasView.contentInset = UIEdgeInsets(top: 0, left: inset, bottom: canvasView.contentInset.bottom, right: inset)
         }
         presence.inverseScale = 1 / z
         if let id = selectedElementID, let e = document.element(id) {
@@ -299,6 +322,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
         guard scrollView === canvasView else { return }
+        // Ending just off fit-width snaps to it (that zoom ends here again, then re-renders).
+        if snapZoomToFitIfClose() { return }
         rasterizeForCurrentZoom()
         rememberPosition()
     }
@@ -308,6 +333,12 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         logScrollJumpIfNeeded()
         updateVisiblePages()
         layoutLasso()
+        updatePageAnchor()
+        noteScrolled()
+        reportVisiblePage()
+    }
+
+    func reportVisiblePage() {
         let page = currentPageIndex
         if page != lastReportedPage {
             lastReportedPage = page
@@ -334,6 +365,12 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === canvasView, !decelerate else { return }
+        rememberPosition()
+    }
+
+    /// Programmatic jumps (go to page, find, the tutor revealing its work) end here.
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        guard scrollView === canvasView else { return }
         rememberPosition()
     }
 
@@ -375,21 +412,14 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    /// Re-renders element views at the current zoom so text and graphs stay sharp.
+    /// Re-renders element views at the current zoom so text and graphs stay sharp, within the
+    /// pixel budget (see +Scroll), and sharpens the paper lines of the pages on screen.
     func rasterizeForCurrentZoom() {
-        let target = displayScale * zoom
-        for v in elementViews.values {
-            let area = max(1, v.bounds.width * v.bounds.height)
-            let maxScale = sqrt(14_000_000 / area)
-            let s = min(target, maxScale, displayScale * 4)
-            if abs(v.contentScaleFactor - s) > 0.05 {
-                v.contentScaleFactor = s
-                v.setNeedsDisplay()
-            }
-        }
+        rasterizeElements()
         if let tv = editingTextView {
-            tv.contentScaleFactor = min(target, displayScale * 4)
+            tv.contentScaleFactor = min(displayScale * zoom, displayScale * 4)
         }
+        updatePageRenderScales()
     }
 
     func zoomToFit(animated: Bool = true) {
@@ -418,43 +448,52 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
 
     // MARK: Pages
 
+    /// The pages changed: page views are updated in place (they follow their page by id), so
+    /// pages already drawn, PDFs especially, don't flash while they're rebuilt.
     func reloadPages() {
-        pageViews.values.forEach { $0.removeFromSuperview() }
-        pageViews.removeAll()
-        boardTiles.values.forEach { $0.removeFromSuperview() }
-        boardTiles.removeAll()
+        if !document.isFreeform {
+            boardTiles.values.forEach { $0.removeFromSuperview() }
+            boardTiles.removeAll()
+        }
         layoutDocument()
     }
 
     func updateVisiblePages() {
         if document.isFreeform {
+            for v in pageViews.values { v.removeFromSuperview() }
+            pageViews.removeAll()
             document.visibleBoardRect = visibleDocRect
             updateBoardTiles()
+            updateVisibleElements()
             return
         }
-        let r = visibleDocRect.insetBy(dx: 0, dy: -document.pageSize.height * 1.2)
-        let count = document.content.pages.count
-        for i in 0..<count {
+        // Build a little beyond the screen; keep what's built until it's well away, so a page
+        // scrolled just out of range and back is still drawn.
+        let visible = visibleDocRect
+        let h = document.pageSize.height
+        let near = visible.insetBy(dx: 0, dy: -h * 1.2)
+        let keep = visible.insetBy(dx: 0, dy: -h * 2.5)
+        var live = Set<UUID>()
+        for (i, page) in document.content.pages.enumerated() {
             let rect = document.pageRect(i)
-            if rect.intersects(r) {
-                let v = pageViews[i] ?? {
-                    let nv = PageBackgroundView(frame: rect)
-                    pagesContainer.addSubview(nv)
-                    pageViews[i] = nv
-                    return nv
-                }()
+            if let v = pageViews[page.id] {
+                guard rect.intersects(keep) else { continue }
+                live.insert(page.id)
                 v.frame = rect
-                let page = document.content.pages[i]
                 v.configure(page: page, number: i + 1, size: rect.size, pdf: page.pdfAssetID.flatMap { document.pdf($0) })
-            } else if let v = pageViews[i] {
-                v.removeFromSuperview()
-                pageViews[i] = nil
+            } else if rect.intersects(near) {
+                live.insert(page.id)
+                let v = dequeuePageView(frame: rect)
+                pageViews[page.id] = v
+                v.configure(page: page, number: i + 1, size: rect.size, pdf: page.pdfAssetID.flatMap { document.pdf($0) })
+                v.setRenderScale(rect.intersects(visible) ? pageRenderScale(for: rect.size) : 1)
             }
         }
-        for (i, v) in pageViews where i >= count {
-            v.removeFromSuperview()
-            pageViews[i] = nil
+        for (id, v) in pageViews where !live.contains(id) {
+            pageViews[id] = nil
+            recyclePageView(v)
         }
+        updateVisibleElements()
     }
 
     /// Builds the board tiles around what's on screen and drops the rest.
@@ -486,6 +525,7 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
                         let nv = PageBackgroundView(frame: rect)
                         pagesContainer.addSubview(nv)
                         boardTiles[key] = nv
+                        nv.setRenderScale(rect.intersects(visibleDocRect) ? pageRenderScale(for: rect.size) : 1)
                         return nv
                     }()
                     v.frame = rect
@@ -536,26 +576,28 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
 
     func environment() -> RenderEnvironment { PageRenderer.environment(for: document) }
 
+    /// Rebuilds the element views near the screen (the rest are built as they scroll into range).
     func reloadAllElements() {
         elementViews.values.forEach { $0.removeFromSuperview() }
         elementViews.removeAll()
-        for e in document.content.elements {
-            _ = makeView(for: e)
-        }
+        updateVisibleElements(force: true)
         rasterizeForCurrentZoom()
     }
 
+    /// Makes (and registers) an element's view, on top of its layer unless `addTo` is false (the
+    /// caller places it). A view far from the screen is dropped again by the next cull.
     @discardableResult
-    func makeView(for e: CanvasElement) -> ElementView {
+    func makeView(for e: CanvasElement, addTo: Bool = true) -> ElementView {
         let v = ElementView(element: e) { [weak self] in
             self?.environment() ?? RenderEnvironment(hand: .handwriting, tutorHex: "#7048E8", image: { _ in nil })
         }
         v.frame = frameForView(e)
-        (e.drawsAboveInk ? overElements : underElements).addSubview(v)
         elementViews[e.id] = v
-        let target = displayScale * zoom
-        let area = max(1, v.bounds.width * v.bounds.height)
-        v.contentScaleFactor = min(target, sqrt(14_000_000 / area), displayScale * 4)
+        v.contentScaleFactor = wantedScale(for: v)
+        if addTo {
+            (e.drawsAboveInk ? overElements : underElements).addSubview(v)
+            scheduleElementCull()
+        }
         return v
     }
 
@@ -624,9 +666,15 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
     }
 
     func documentDidChangePages() {
-        reloadPages()
-        refreshAllElementFrames()
-        layoutDocument()
+        // Pages added or removed above the screen mustn't move what the student is looking at,
+        // and removing the last page while on it mustn't leave the view past the end.
+        keepingPageInView {
+            reloadPages()
+            refreshAllElementFrames()
+            layoutDocument()
+        }
+        updateVisibleElements(force: true)
+        reportVisiblePage()
     }
 
     func documentDidReplaceDrawing() {
@@ -721,7 +769,8 @@ final class NoteCanvasViewController: UIViewController, PKCanvasViewDelegate, UI
         let last = document.content.pages.count - 1
         let lastRect = document.pageRect(last)
         if rects.contains(where: { $0.maxY > lastRect.maxY - 110 && $0.minY < lastRect.maxY + document.pageGap }) {
-            document.appendPage()
+            // Not an undo step of its own: Undo should take back the stroke, not the page under it.
+            document.appendPage(undoable: false)
         }
     }
 
@@ -777,6 +826,11 @@ enum CanvasPositionMemory {
 
     static func save(_ id: UUID, docX: CGFloat, docY: CGFloat, zoom: CGFloat?) {
         UserDefaults.standard.set([Double(docX), Double(docY), Double(zoom ?? 0)], forKey: key(id))
+    }
+
+    /// Drops a deleted note's position.
+    static func forget(_ id: UUID) {
+        UserDefaults.standard.removeObject(forKey: key(id))
     }
 
     static func load(_ id: UUID) -> Position? {

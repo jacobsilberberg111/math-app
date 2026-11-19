@@ -21,14 +21,14 @@ extension DemoDirector {
             let texts = doc.content.elements.filter { if case .text = $0.kind { return true }; return false }
             FeatureCheck.check("practical report template", doc.content.pages.count == 2 && texts.count >= 17,
                                "\(doc.content.pages.count) pages, \(texts.count) text items")
-            library.delete(meta)
+            library.deleteNow(meta)
         } else {
             FeatureCheck.check("practical report template", false, "missing")
         }
         if let blurt = science.profile.templates.first(where: \.isBlurt) {
             let meta = library.createNote(from: blurt, subject: science, paperColor: .white)
             FeatureCheck.check("blurt template", meta.isBlurt)
-            library.delete(meta)
+            library.deleteNow(meta)
         }
 
         // Tools through the executor, then a snapshot render of the page (draws every element).

@@ -27,6 +27,9 @@ struct NoteMeta: Codable, Identifiable, Equatable {
     /// Study notes made for revision: "blurt" (written from memory, checked against the
     /// subject's notes) or "quiz" (questions from the subject's notes).
     var studyMode: String?
+    /// When the note was deleted: it waits in Recently Deleted (hidden everywhere else) until it's
+    /// restored, or removed for good after 30 days.
+    var deletedAt: Date?
 
     init(id: UUID = UUID(), title: String, subjectID: UUID? = nil, paper: PaperStyle? = nil) {
         self.id = id
@@ -349,6 +352,10 @@ struct TextContent: Codable, Equatable {
     var colorHex: String
     /// Tutor text understands `$math$` and `**bold**`; student text is literal.
     var rich: Bool
+    /// The student's formatted text (bold, italic, underline, colours, sizes, alignment) as an
+    /// archived NSAttributedString; `text` keeps the plain words for search and the tutor.
+    /// nil for older notes and tutor text.
+    var attributed: Data? = nil
 }
 
 struct MathContent: Codable, Equatable {

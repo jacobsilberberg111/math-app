@@ -160,19 +160,21 @@ enum PageRenderer {
 
     // MARK: Thumbnails
 
-    static func thumbnail(_ doc: NoteDocument, page: Int = 0, width: CGFloat = 360) -> UIImage {
-        if doc.isFreeform { return boardThumbnail(doc, width: width) }
+    /// A page as a picture: by default the library card's, 240 points wide at 2x (cards are at most
+    /// 240 points wide, so it's sharp on the iPad's screen without being bigger than it needs to be).
+    static func thumbnail(_ doc: NoteDocument, page: Int = 0, width: CGFloat = 240, pixelScale: CGFloat = 2) -> UIImage {
+        if doc.isFreeform { return boardThumbnail(doc, width: width, pixelScale: pixelScale) }
         let size = doc.pageSize
         let scale = width / size.width
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
+        format.scale = pixelScale
         format.opaque = true
         let env = environment(for: doc)
         return UIGraphicsImageRenderer(size: CGSize(width: width, height: size.height * scale), format: format).image { rc in
             let ctx = rc.cgContext
             ctx.scaleBy(x: scale, y: scale)
             if doc.content.pages.indices.contains(page) {
-                drawPage(doc, page: page, ctx: ctx, inkScale: max(0.5, scale * 2), env: env)
+                drawPage(doc, page: page, ctx: ctx, inkScale: max(0.5, scale * pixelScale * 1.5), env: env)
             }
         }
     }
@@ -195,11 +197,11 @@ enum PageRenderer {
         return r
     }
 
-    static func boardThumbnail(_ doc: NoteDocument, width: CGFloat) -> UIImage {
+    static func boardThumbnail(_ doc: NoteDocument, width: CGFloat, pixelScale: CGFloat = 2) -> UIImage {
         let region = boardThumbnailRegion(doc)
         let scale = width / region.width
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
+        format.scale = pixelScale
         format.opaque = true
         let env = environment(for: doc)
         let paper = doc.content.pages.first?.paper ?? .standard
@@ -210,7 +212,7 @@ enum PageRenderer {
             // The region can run past the board's edge; fill it all with the paper first.
             PaperRenderer.drawBoard(paper, region: region, ctx: ctx)
             if !doc.content.pages.isEmpty {
-                drawPage(doc, page: 0, ctx: ctx, inkScale: max(0.05, scale * 2), env: env, region: region)
+                drawPage(doc, page: 0, ctx: ctx, inkScale: max(0.05, scale * pixelScale * 1.5), env: env, region: region)
             }
         }
     }

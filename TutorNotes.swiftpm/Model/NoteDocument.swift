@@ -354,100 +354,7 @@ final class NoteDocument {
 
     // MARK: Pages
 
-    func appendPage(paper: PaperStyle? = nil) {
-        let style = paper ?? content.pages.last?.paper ?? .standard
-        content.pages.append(Page(paper: style))
-        canvas?.documentDidChangePages()
-        markDirty()
-    }
-
-    /// Inserts a blank page after `index`, shifting ink and elements below it down.
-    func insertPage(after index: Int, paper: PaperStyle? = nil) {
-        let insertAt = index + 1
-        guard insertAt < content.pages.count else {
-            appendPage(paper: paper)
-            return
-        }
-        let style = paper ?? content.pages[index].paper
-        let shiftFromY = pageOrigin(insertAt).y - NoteDocument.pageGap / 2
-        let dy = pageSize.height + NoteDocument.pageGap
-        let remap = PageRemap(destination: content.pages.indices.map { $0 < insertAt ? $0 : $0 + 1 }, oldSize: content.pageSize,
-                              newSize: content.pageSize, topMargin: topMargin, pageGap: pageGap)
-        content.pages.insert(Page(paper: style), at: insertAt)
-        content.paper = content.paper.map { remap.remapped($0) }
-        for i in content.elements.indices where content.elements[i].pageIndex >= insertAt {
-            content.elements[i].pageIndex += 1
-        }
-        // Work on a local copy: every `PKDrawing.strokes` access bridges the whole array.
-        var strokes = drawing.strokes
-        for i in strokes.indices where strokes[i].renderBounds.midY > shiftFromY {
-            strokes[i].transform = strokes[i].transform.concatenating(CGAffineTransform(translationX: 0, y: dy))
-        }
-        drawing.strokes = strokes
-        undoManager.removeAllActions()
-        canvas?.documentDidChangePages()
-        canvas?.documentDidReplaceDrawing()
-        onPagesRearranged?(remap)
-        markDirty()
-    }
-
-    /// Deletes a page together with its ink and elements. Not undoable (asks for confirmation in UI).
-    func deletePage(_ index: Int) {
-        guard content.pages.count > 1, content.pages.indices.contains(index) else { return }
-        let rect = pageRect(index).insetBy(dx: -NoteDocument.sideMargin, dy: -NoteDocument.pageGap / 2)
-        let dy = pageSize.height + NoteDocument.pageGap
-        var strokes = drawing.strokes
-        strokes.removeAll { rect.contains($0.renderBounds.center) }
-        for i in strokes.indices where strokes[i].renderBounds.midY > rect.maxY {
-            strokes[i].transform = strokes[i].transform.concatenating(CGAffineTransform(translationX: 0, y: -dy))
-        }
-        drawing.strokes = strokes
-        let removedIDs = content.elements.filter { $0.pageIndex == index }.map(\.id)
-        content.elements.removeAll { $0.pageIndex == index }
-        for i in content.elements.indices where content.elements[i].pageIndex > index {
-            content.elements[i].pageIndex -= 1
-        }
-        // Page numbers kept elsewhere (past-paper questions, the tutor's records) close the gap;
-        // anything that was on the deleted page now points at the one before it.
-        let remap = PageRemap(destination: content.pages.indices.map { $0 < index ? $0 : max(0, $0 - 1) }, oldSize: content.pageSize,
-                              newSize: content.pageSize, topMargin: topMargin, pageGap: pageGap)
-        content.pages.remove(at: index)
-        content.paper = content.paper.map { remap.remapped($0) }
-        undoManager.removeAllActions()
-        for id in removedIDs { canvas?.documentDidRemoveElement(id: id) }
-        canvas?.documentDidChangePages()
-        canvas?.documentDidReplaceDrawing()
-        onPagesRearranged?(remap)
-        markDirty()
-    }
-
-    func duplicatePage(_ index: Int) {
-        guard content.pages.indices.contains(index) else { return }
-        let source = content.pages[index]
-        insertPage(after: index, paper: source.paper)
-        content.pages[index + 1].pdfAssetID = source.pdfAssetID
-        content.pages[index + 1].pdfPageIndex = source.pdfPageIndex
-        let dy = pageSize.height + NoteDocument.pageGap
-        let rect = pageRect(index)
-        var d = drawing
-        let copies = d.strokes.filter { rect.contains($0.renderBounds.center) }.map { stroke -> PKStroke in
-            var s = stroke
-            s.transform = s.transform.concatenating(CGAffineTransform(translationX: 0, y: dy))
-            return s
-        }
-        d.strokes.append(contentsOf: copies)
-        drawing = d
-        for e in content.elements where e.pageIndex == index {
-            var copy = e
-            copy.id = nextElementID()
-            copy.pageIndex = index + 1
-            content.elements.append(copy)
-            canvas?.documentDidAddElement(copy, reveal: .none)
-        }
-        canvas?.documentDidChangePages()
-        canvas?.documentDidReplaceDrawing()
-        markDirty()
-    }
+    // Adding, removing, duplicating and importing pages: see NoteDocument+Pages (each is one undo step).
 
     func setPaper(_ paper: PaperStyle, forPage index: Int?) {
         if let index, content.pages.indices.contains(index) {
@@ -527,32 +434,6 @@ final class NoteDocument {
         guard let d = CGPDFDocument(assetURL(assetID) as CFURL) else { return nil }
         pdfCache[assetID] = d
         return d
-    }
-
-    /// Appends one page per PDF page with the PDF drawn as the page background.
-    func importPDFPages(assetID: String, replaceFirstBlankPage: Bool) {
-        guard let pdf = pdf(assetID) else { return }
-        let count = pdf.numberOfPages
-        guard count > 0 else { return }
-        var startIndex = content.pages.count
-        let firstIsBlank = content.pages.count == 1 && content.elements.isEmpty && drawing.strokes.isEmpty && content.pages[0].pdfAssetID == nil
-        if replaceFirstBlankPage && firstIsBlank {
-            content.pages.removeAll()
-            startIndex = 0
-            if let first = pdf.page(at: 1) {
-                let box = first.getBoxRect(.cropBox)
-                let rotated = first.rotationAngle % 180 == 0 ? box.size : CGSize(width: box.height, height: box.width)
-                if rotated.width > 0 {
-                    content.pageSize = PageSize(width: 816, height: (816 * rotated.height / rotated.width).rounded())
-                }
-            }
-        }
-        for i in 0..<count {
-            content.pages.append(Page(paper: PaperStyle(pattern: .blank, color: .white), pdfAssetID: assetID, pdfPageIndex: i))
-        }
-        _ = startIndex
-        canvas?.documentDidChangePages()
-        markDirty()
     }
 
     // MARK: Search

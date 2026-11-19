@@ -6,6 +6,7 @@ enum LibrarySelection: Hashable {
     case all
     case unfiled
     case subject(UUID)
+    case recentlyDeleted
 }
 
 struct LibraryView: View {
@@ -13,7 +14,8 @@ struct LibraryView: View {
     @EnvironmentObject var settings: AppSettings
     @State private var selection: LibrarySelection? = .home
     @State private var search = ""
-    @State private var sort: LibrarySort = .modified
+    /// Kept between launches.
+    @AppStorage("librarySort") private var sort: LibrarySort = .modified
     @State private var openNote: NoteMeta?
     @State private var showSettings = false
     @State private var showPDFImporter = false
@@ -24,6 +26,10 @@ struct LibraryView: View {
     @State private var showNewSubject = false
     @State private var editingSubject: Subject?
     @State private var pendingDelete: NoteMeta?
+    @State private var pendingSubjectDelete: Subject?
+    /// A note tapped in Recently Deleted: restore it or delete it now.
+    @State private var trashChoice: NoteMeta?
+    @State private var confirmEmptyTrash = false
     @State private var showOnboarding = false
     @State private var importFailed = false
     @State private var showPastPaper = false
@@ -42,7 +48,13 @@ struct LibraryView: View {
         case .home, .all: return library.notes(in: nil, search: search, sort: sort)
         case .unfiled: return library.notes(in: nil, unfiledOnly: true, search: search, sort: sort)
         case .subject(let id): return library.notes(in: id, search: search, sort: sort)
+        case .recentlyDeleted: return []
         }
+    }
+
+    var trashedNotes: [NoteMeta] {
+        let q = search.trimmed
+        return q.isEmpty ? library.trash : library.trash.filter { $0.title.localizedCaseInsensitiveContains(q) }
     }
 
     var title: String {
@@ -51,6 +63,7 @@ struct LibraryView: View {
         case .all: return "All Notes"
         case .unfiled: return "Unfiled"
         case .subject(let id): return library.subject(id)?.name ?? "Notes"
+        case .recentlyDeleted: return "Recently Deleted"
         }
     }
 
@@ -60,7 +73,9 @@ struct LibraryView: View {
         } detail: {
             NavigationStack {
                 Group {
-                    if (selection ?? .home) == .home && search.trimmed.isEmpty {
+                    if selection == .recentlyDeleted {
+                        trashGrid
+                    } else if (selection ?? .home) == .home && search.trimmed.isEmpty {
                         HomeView(open: open, newNotebook: { createNote(defaultPaper) }, newBoard: { createBoard(title: nil) },
                                  askTutor: { createBoard(title: "Question") }, importPDF: { showPDFImporter = true },
                                  pastPaper: { showPastPaper = true },
@@ -143,7 +158,33 @@ struct LibraryView: View {
                             titleVisibility: .visible) {
             Button("Delete", role: .destructive) { if let n = pendingDelete { library.delete(n) }; pendingDelete = nil }
         } message: {
-            Text("The note, its recordings and its tutor conversation will be deleted.")
+            Text("It moves to Recently Deleted, where you can restore it for \(TrashPolicy.keepDays) days.")
+        }
+        .confirmationDialog("Delete \u{201C}\(pendingSubjectDelete?.name ?? "")\u{201D}?",
+                            isPresented: Binding(get: { pendingSubjectDelete != nil }, set: { if !$0 { pendingSubjectDelete = nil } }),
+                            titleVisibility: .visible) {
+            Button("Delete Subject", role: .destructive) {
+                if let subject = pendingSubjectDelete {
+                    library.deleteSubject(subject)
+                    if selection == .subject(subject.id) { selection = .home }
+                }
+                pendingSubjectDelete = nil
+            }
+        } message: {
+            Text(subjectDeleteMessage)
+        }
+        .confirmationDialog(trashChoice?.title ?? "", isPresented: Binding(get: { trashChoice != nil }, set: { if !$0 { trashChoice = nil } }),
+                            titleVisibility: .visible) {
+            Button("Restore") { if let n = trashChoice { library.restore(n) }; trashChoice = nil }
+            Button("Delete Now", role: .destructive) { if let n = trashChoice { library.deleteNow(n) }; trashChoice = nil }
+        } message: {
+            Text("Deleted notes can't be opened. Restore it to open it again.")
+        }
+        .confirmationDialog("Delete \(library.trash.count) note\(library.trash.count == 1 ? "" : "s") for good?", isPresented: $confirmEmptyTrash,
+                            titleVisibility: .visible) {
+            Button("Delete All", role: .destructive) { library.emptyTrash() }
+        } message: {
+            Text("They, their recordings and their tutor conversations will be gone. This can't be undone.")
         }
         .onAppear {
             DemoDirector.shared.libraryAppeared(library: library, open: { open($0) }, close: { openNote = nil },
@@ -190,8 +231,7 @@ struct LibraryView: View {
                             }
                         } label: { Label("Colour", systemImage: "paintpalette") }
                         Button(role: .destructive) {
-                            library.deleteSubject(subject)
-                            if selection == .subject(subject.id) { selection = .home }
+                            pendingSubjectDelete = subject
                         } label: { Label("Delete Subject", systemImage: "trash") }
                     }
                 }
@@ -200,6 +240,10 @@ struct LibraryView: View {
                 } label: {
                     Label("New Subject", systemImage: "plus")
                 }
+            }
+            Section {
+                Label("Recently Deleted", systemImage: "trash").tag(LibrarySelection.recentlyDeleted)
+                    .badge(library.trash.count)
             }
         }
         .navigationTitle("Margin")
@@ -250,6 +294,53 @@ struct LibraryView: View {
         .background(Color(uiColor: .systemGroupedBackground))
     }
 
+    private var subjectDeleteMessage: String {
+        guard let subject = pendingSubjectDelete else { return "" }
+        let n = library.notes.filter { $0.subjectID == subject.id }.count
+        return n == 0 ? "It has no notes." : "Its \(n) note\(n == 1 ? "" : "s") will move to Unfiled; none are deleted."
+    }
+
+    // MARK: Recently Deleted
+
+    private var trashGrid: some View {
+        ScrollView {
+            if trashedNotes.isEmpty {
+                ContentUnavailableView {
+                    Label(search.isEmpty ? "Nothing deleted" : "No results", systemImage: search.isEmpty ? "trash" : "magnifyingglass")
+                } description: {
+                    Text(search.isEmpty ? "Deleted notes wait here for \(TrashPolicy.keepDays) days, then they're removed for good."
+                                        : "Nothing deleted matches \u{201C}\(search)\u{201D}.")
+                }
+                .padding(.top, 80)
+            } else {
+                Text("Notes are removed for good \(TrashPolicy.keepDays) days after they're deleted.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 26)], spacing: 30) {
+                ForEach(trashedNotes) { meta in
+                    NoteCard(meta: meta, subject: library.subject(meta.subjectID), trashCaption: trashCaption(meta))
+                        .opacity(0.85)
+                        .onTapGesture { trashChoice = meta }
+                        .contextMenu {
+                            Button { library.restore(meta) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
+                            Button(role: .destructive) { library.deleteNow(meta) } label: { Label("Delete Now", systemImage: "trash") }
+                        }
+                }
+            }
+            .padding(24)
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+    }
+
+    private func trashCaption(_ meta: NoteMeta) -> String {
+        let days = TrashPolicy.daysLeft(deletedAt: meta.deletedAt ?? Date())
+        return days == 0 ? "Removed today" : "\(days) day\(days == 1 ? "" : "s") left"
+    }
+
     @ViewBuilder
     private func contextMenu(for meta: NoteMeta) -> some View {
         Button { renameText = meta.title; renaming = meta } label: { Label("Rename", systemImage: "pencil") }
@@ -267,7 +358,10 @@ struct LibraryView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            if selection != .home {
+            if selection == .recentlyDeleted {
+                Button("Empty", role: .destructive) { confirmEmptyTrash = true }
+                    .disabled(library.trash.isEmpty)
+            } else if selection != .home {
                 Menu {
                     Picker("Sort", selection: $sort) {
                         ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
@@ -424,6 +518,8 @@ struct LibraryView: View {
 struct NoteCard: View {
     let meta: NoteMeta
     let subject: Subject?
+    /// In Recently Deleted: how long until it goes, shown in place of the date.
+    var trashCaption: String? = nil
     @Environment(LibraryStore.self) private var library
 
     var body: some View {
@@ -463,7 +559,7 @@ struct NoteCard: View {
                         Text(subject.name).lineLimit(1)
                         Text("·")
                     }
-                    Text(meta.modifiedAt.shortRelative)
+                    Text(trashCaption ?? meta.modifiedAt.shortRelative)
                     if let score = meta.paperScore {
                         Text("· \(score)")
                     } else {

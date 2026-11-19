@@ -13,13 +13,24 @@ final class StrokeObserverGesture: UIGestureRecognizer {
     private var tracked: UITouch?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard tracked == nil, touches.count == 1, let t = touches.first,
-              t.type == .pencil || (acceptsFinger && t.type == .direct) else {
-            if tracked == nil { state = .failed }
-            return
+        // A palm resting on the page (the usual way to write) is ignored rather than failing the
+        // whole recognizer: once failed it would miss every stroke until all touches lifted.
+        for t in touches {
+            let usable = t.type == .pencil || (acceptsFinger && t.type == .direct)
+            if tracked == nil, usable {
+                tracked = t
+                onBegin?(t.location(in: coordinateView), t.timestamp)
+            } else {
+                ignore(t, for: event)
+            }
         }
-        tracked = t
-        onBegin?(t.location(in: coordinateView), t.timestamp)
+    }
+
+    /// After a stroke, keep watching while other touches (the hand) are still down.
+    private func finish(_ t: UITouch, event: UIEvent) {
+        tracked = nil
+        let others = (event.allTouches ?? []).filter { $0 !== t && $0.phase != .ended && $0.phase != .cancelled }
+        if others.isEmpty { state = .failed }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -33,15 +44,13 @@ final class StrokeObserverGesture: UIGestureRecognizer {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         guard let t = tracked, touches.contains(t) else { return }
         onEnd?(false)
-        tracked = nil
-        state = .failed
+        finish(t, event: event)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         guard let t = tracked, touches.contains(t) else { return }
         onEnd?(true)
-        tracked = nil
-        state = .failed
+        finish(t, event: event)
     }
 
     override func reset() {
@@ -58,8 +67,11 @@ struct SnapState {
     var original: CGPoint = .zero
     var snapPoint: CGPoint = .zero
     var strokeCountAtBegin = 0
+    /// The pen's ink and width when the shape snapped, for the clean stroke.
+    var ink: PKInk?
+    var width: CGFloat = 3
     var pending: RecognizedShape?
-    var pendingDeadline = Date.distantPast
+
 }
 
 extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDelegate {
@@ -119,9 +131,14 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover(_:)))
         canvasView.addGestureRecognizer(hover)
 
+        // One finger or the pencil; the delegate keeps a resting palm from dragging the item.
         let movePan = UIPanGestureRecognizer(target: self, action: #selector(handleMovePan(_:)))
+        movePan.maximumNumberOfTouches = 1
+        movePan.delegate = self
         selectionView.addGestureRecognizer(movePan)
         let resizePan = UIPanGestureRecognizer(target: self, action: #selector(handleResizePan(_:)))
+        resizePan.maximumNumberOfTouches = 1
+        resizePan.delegate = self
         selectionView.handle.addGestureRecognizer(resizePan)
         selectionView.onAction = { [weak self] action in self?.performSelectionAction(action) }
 
@@ -229,6 +246,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
     // MARK: Taps
 
     @objc func handleTap(_ g: UITapGestureRecognizer) {
+        takeKeyFocus()
         if eyedropper != nil { finishEyedropper(at: g.location(in: chrome)); return }
         let docPoint = g.location(in: chrome)
         if replayTime != nil {
@@ -237,13 +255,13 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         }
         switch tool.kind {
         case .text:
-            if let tv = editingTextView, tv.isFirstResponder {
-                endTextEditing()
-                return
-            }
-            if let e = hitTestElement(at: docPoint), case .text = e.kind, e.author == .student {
-                beginEditingText(element: e)
-            } else {
+            // Tapping a box (yours or the tutor's) edits it with the caret where you tapped; tapping
+            // empty paper while a box is open just closes it, the next tap starts a new one.
+            let wasEditing = editingTextView?.isFirstResponder == true
+            if wasEditing { endTextEditing() }
+            if let e = hitTestElement(at: docPoint), case .text = e.kind {
+                beginEditingText(element: e, at: docPoint)
+            } else if !wasEditing {
                 beginNewText(at: docPoint)
             }
         case .select:
@@ -378,7 +396,14 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
             v.frame = r.insetBy(dx: -ElementView.padding, dy: -ElementView.padding)
             selectionView.frame = r.insetBy(dx: -4, dy: -4)
             selectionView.layoutChrome(zoom: zoom)
-        case .ended, .cancelled:
+        case .cancelled, .failed:
+            // Interrupted (a call, a system gesture): put it back where it was.
+            guard let start = moveStartFrame else { return }
+            moveStartFrame = nil
+            v.frame = start.insetBy(dx: -ElementView.padding, dy: -ElementView.padding)
+            selectionView.frame = start.insetBy(dx: -4, dy: -4)
+            selectionView.layoutChrome(zoom: zoom)
+        case .ended:
             guard let start = moveStartFrame else { return }
             moveStartFrame = nil
             let r = start.offsetBy(dx: t.x, dy: t.y)
@@ -424,6 +449,13 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
                 }
             }
         default:
+            // Interrupted: back to its size before the drag.
+            if moveStartFrame != nil {
+                let r = document.docRect(for: e)
+                v.frame = r.insetBy(dx: -ElementView.padding, dy: -ElementView.padding)
+                selectionView.frame = r.insetBy(dx: -4, dy: -4)
+                selectionView.layoutChrome(zoom: zoom)
+            }
             moveStartFrame = nil
         }
     }
@@ -451,53 +483,127 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
 
     // MARK: Text editing
 
+    /// A new box where you tapped, in the text tool's style, size and colour. It starts small and
+    /// grows as you type, up to the page's right margin.
     func beginNewText(at docPoint: CGPoint) {
         endTextEditing()
         let (page, p) = document.pagePoint(fromDoc: docPoint)
-        let width = min(360, document.pageSize.width - p.x - 24)
-        guard width > 60 else { return }
-        let font = NoteFonts.studentFont(size: 20)
-        let tv = makeTextView(font: font, color: UIColor(hex: tool.penColorHex))
-        let docOrigin = document.docRect(CGRect(x: p.x, y: p.y - font.lineHeight / 2, width: width, height: font.lineHeight + 8), page: page)
-        tv.frame = docOrigin
+        let pageW = document.pageSize.width
+        // Near the right edge, start further left so there's room to type.
+        let x = max(12, min(p.x, pageW - 24 - 200))
+        let maxWidth = min(520, pageW - x - 24)
+        guard maxWidth > 60 else { return }
+        let style: TextStyle = tool.textStyle == .handwriting ? .typed : tool.textStyle
+        let size = tool.textSize
+        let font = StudentText.font(style: style, size: size)
+        let tv = makeTextView(style: style, size: size, formatting: true)
+        tv.typingAttributes = StudentText.baseAttributes(style: style, size: size, colorHex: tool.textColorHex)
+        tv.maxWidth = maxWidth
+        let inset = ElementRenderer.textInsets(style)
+        let origin = CGPoint(x: x, y: p.y - font.lineHeight / 2 - inset.top)
+        tv.frame = document.docRect(CGRect(origin: origin, size: CGSize(width: 120, height: font.lineHeight + inset.top + inset.bottom)), page: page)
         editingNewTextPage = page
-        editingNewTextOrigin = CGPoint(x: p.x, y: p.y - font.lineHeight / 2)
+        editingNewTextOrigin = origin
         overElements.addSubview(tv)
         editingTextView = tv
-        tv.becomeFirstResponder()
+        resizeTextView(tv)
+        startEditing(tv)
     }
 
-    func beginEditingText(element e: CanvasElement) {
+    /// Edits an existing box in place: yours with its formatting, the tutor's in its own font with
+    /// its markup kept. With a point, the caret goes where you tapped.
+    func beginEditingText(element e: CanvasElement, at docPoint: CGPoint? = nil) {
         endTextEditing()
         guard case .text(let t) = e.kind else { return }
-        let font = NoteFonts.studentFont(size: t.fontSize)
-        let tv = makeTextView(font: font, color: UIColor(hex: t.colorHex))
-        tv.text = t.text
+        let frame = document.docRect(for: e)
+        let isStudentText = e.author == .student && !t.rich
+        let tv = makeTextView(style: t.style, size: t.fontSize, formatting: isStudentText)
         tv.elementID = e.id
-        tv.frame = document.docRect(for: e)
+        if isStudentText {
+            let s = StudentText.attributedString(t)
+            tv.attributedText = s
+            tv.typingAttributes = s.length > 0 ? s.attributes(at: s.length - 1, effectiveRange: nil)
+                : StudentText.baseAttributes(style: t.style, size: t.fontSize, colorHex: t.colorHex)
+            // Room to grow to the margin, unless the box was narrowed to wrap its lines on purpose.
+            let inset = ElementRenderer.textInsets(t.style)
+            let unwrapped = StudentText.size(s, width: .greatestFiniteMagnitude).width + inset.left + inset.right
+            let (_, local) = document.pageRectFromDoc(frame)
+            let toMargin = min(520, document.pageSize.width - local.minX - 24)
+            tv.maxWidth = unwrapped > frame.width + 2 ? frame.width : max(frame.width, toMargin)
+        } else {
+            tv.tutorContent = t
+            tv.font = ElementRenderer.font(for: t, author: e.author, env: environment())
+            tv.textColor = UIColor(hex: t.colorHex)
+            tv.text = t.text
+            tv.maxWidth = frame.width
+        }
+        tv.frame = frame
         elementViews[e.id]?.isHidden = true
         overElements.addSubview(tv)
         editingTextView = tv
         resizeTextView(tv)
-        tv.becomeFirstResponder()
+        if let docPoint {
+            let p = CGPoint(x: docPoint.x - tv.frame.minX, y: docPoint.y - tv.frame.minY)
+            if let pos = tv.closestPosition(to: p) { tv.selectedTextRange = tv.textRange(from: pos, to: pos) }
+        }
+        startEditing(tv)
     }
 
-    private func makeTextView(font: UIFont, color: UIColor) -> CanvasTextView {
+    private func makeTextView(style: TextStyle, size: CGFloat, formatting: Bool) -> CanvasTextView {
         let tv = CanvasTextView(frame: .zero, textContainer: nil)
-        tv.font = font
-        tv.textColor = color
+        tv.style = style
+        tv.baseSize = size
+        tv.applyStyleDecoration()
+        tv.zoom = zoom
+        tv.allowsEditingTextAttributes = formatting
         tv.delegate = self
         tv.contentScaleFactor = min(displayScale * zoom, displayScale * 4)
+        if formatting {
+            let bar = TextFormatBar(textView: tv)
+            bar.onDone = { [weak self] in self?.endTextEditing() }
+            tv.inputAccessoryView = bar
+        }
         return tv
     }
 
-    func resizeTextView(_ tv: UITextView) {
+    private func startEditing(_ tv: CanvasTextView) {
+        // Scrolling the page mustn't close the keyboard mid-sentence.
+        canvasView.keyboardDismissMode = .none
+        observeKeyboard()
+        tv.becomeFirstResponder()
+    }
+
+    /// Left-aligned student boxes hug their text (up to `maxWidth`); centred / right-aligned ones
+    /// use the full width; tutor boxes keep theirs. The height always fits the text.
+    func resizeTextView(_ textView: UITextView) {
+        guard let tv = textView as? CanvasTextView else { return }
+        let inset = tv.textContainerInset
+        if tv.tutorContent == nil {
+            if tv.hasNonLeftAlignment {
+                tv.frame.size.width = tv.maxWidth
+            } else {
+                let fit = StudentText.size(tv.attributedText ?? NSAttributedString(), width: tv.maxWidth - inset.left - inset.right)
+                tv.frame.size.width = min(tv.maxWidth, max(120, fit.width + inset.left + inset.right + 8))
+            }
+        }
         let fit = tv.sizeThatFits(CGSize(width: tv.bounds.width, height: .greatestFiniteMagnitude))
-        tv.frame.size.height = max(fit.height, (tv.font?.lineHeight ?? 20) + 8)
+        let lineHeight = (tv.typingAttributes[.font] as? UIFont)?.lineHeight ?? tv.font?.lineHeight ?? 22
+        tv.frame.size.height = max(fit.height, lineHeight + inset.top + inset.bottom)
     }
 
     func textViewDidChange(_ textView: UITextView) {
         resizeTextView(textView)
+        (textView.inputAccessoryView as? TextFormatBar)?.refresh()
+        if let tv = textView as? CanvasTextView { scrollCaretVisible(tv) }
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        (textView.inputAccessoryView as? TextFormatBar)?.refresh()
+    }
+
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        guard text == "\n", let tv = textView as? CanvasTextView, tv.tutorContent == nil else { return true }
+        return tv.handleReturn(in: range)
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
@@ -507,31 +613,104 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
     func endTextEditing() {
         guard let tv = editingTextView else { return }
         editingTextView = nil
-        let text = tv.text ?? ""
+        stopObservingKeyboard()
+        canvasView.keyboardDismissMode = .interactive
         let docFrame = tv.frame
         tv.removeFromSuperview()
-        let fontSize = tv.font?.pointSize ?? 20
-        let colorHex = (tv.textColor ?? .black).hexString
+        let env = environment()
+        let existing = tv.elementID.flatMap { document.element($0) }
+        let author = existing?.author ?? .student
+        let content: TextContent
+        if var t = tv.tutorContent {
+            t.text = tv.text ?? ""
+            content = t
+        } else {
+            let attr = NSAttributedString(attributedString: tv.attributedText ?? NSAttributedString())
+            var t = TextContent(text: attr.string, style: tv.style, fontSize: tv.baseSize,
+                                colorHex: StudentText.leading(attr)?.colorHex ?? tool.textColorHex, rich: false)
+            t.attributed = StudentText.archive(attr)
+            content = t
+        }
+        // The saved box is measured the way the page draws it.
+        var size = docFrame.size
+        if tv.tutorContent == nil && !tv.hasNonLeftAlignment {
+            size.width = max(40, ElementRenderer.fittedTextWidth(content, author: author, maxWidth: docFrame.width, env: env))
+        }
+        size.height = ElementRenderer.measureText(content, author: author, width: size.width, env: env).height
+        let blank = content.text.trimmed.isEmpty
         if let id = tv.elementID {
             elementViews[id]?.isHidden = false
-            if text.trimmed.isEmpty {
+            if blank {
                 document.remove(id, actionName: "Delete Text")
             } else {
-                let (page, local) = document.pageRectFromDoc(docFrame)
-                document.update(id, actionName: "Edit Text") {
-                    $0.pageIndex = page
-                    $0.frame = local
-                    $0.kind = .text(TextContent(text: text, style: .typed, fontSize: fontSize, colorHex: colorHex, rich: false))
+                let (page, local) = document.pageRectFromDoc(CGRect(origin: docFrame.origin, size: size))
+                let unchanged: Bool = {
+                    guard let old = existing, case .text(let t) = old.kind else { return false }
+                    return t == content && old.pageIndex == page && old.frame.size.equalTo(local.size)
+                }()
+                if !unchanged {
+                    document.update(id, actionName: "Edit Text") {
+                        $0.pageIndex = page
+                        $0.frame = local
+                        $0.kind = .text(content)
+                    }
                 }
             }
-        } else if !text.trimmed.isEmpty, let page = editingNewTextPage, let origin = editingNewTextOrigin {
-            let local = CGRect(origin: origin, size: docFrame.size)
-            let e = CanvasElement(id: document.nextElementID(), pageIndex: page, frame: local, author: .student,
-                                  kind: .text(TextContent(text: text, style: .typed, fontSize: fontSize, colorHex: colorHex, rich: false)))
+        } else if !blank, let page = editingNewTextPage, let origin = editingNewTextOrigin {
+            let e = CanvasElement(id: document.nextElementID(), pageIndex: page, frame: CGRect(origin: origin, size: size),
+                                  author: .student, kind: .text(content))
             document.add(e, actionName: "Add Text")
         }
         editingNewTextPage = nil
         editingNewTextOrigin = nil
+    }
+
+    // MARK: Keyboard
+
+    private func observeKeyboard() {
+        guard extras.keyboardObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        extras.keyboardObservers = [
+            center.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] n in
+                let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+                MainActor.assumeIsolated { self?.keyboardMoved(to: end) }
+            },
+            center.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setKeyboardInset(0) }
+            },
+        ]
+    }
+
+    func stopObservingKeyboard() {
+        for o in extras.keyboardObservers { NotificationCenter.default.removeObserver(o) }
+        extras.keyboardObservers = []
+        setKeyboardInset(0)
+    }
+
+    /// Keeps the box being typed in above the keyboard (and its formatting bar).
+    private func keyboardMoved(to screenFrame: CGRect?) {
+        guard let screenFrame, let window = view.window else { return }
+        let kb = view.convert(screenFrame, from: window.screen.coordinateSpace)
+        setKeyboardInset(max(0, canvasView.frame.maxY - kb.minY))
+        if let tv = editingTextView { scrollCaretVisible(tv) }
+    }
+
+    private func setKeyboardInset(_ h: CGFloat) {
+        guard abs(extras.keyboardInset - h) > 0.5 else { return }
+        extras.keyboardInset = h
+        canvasView.contentInset.bottom = h
+        canvasView.verticalScrollIndicatorInsets.bottom = h
+    }
+
+    func scrollCaretVisible(_ tv: CanvasTextView) {
+        guard extras.keyboardInset > 0, let r = tv.selectedTextRange else { return }
+        let caret = canvasView.convert(tv.caretRect(for: r.end), from: tv)
+        let visible = CGRect(x: canvasView.contentOffset.x, y: canvasView.contentOffset.y,
+                             width: canvasView.bounds.width, height: canvasView.bounds.height - extras.keyboardInset)
+        guard !visible.insetBy(dx: 0, dy: 30).contains(caret) else { return }
+        let y = caret.midY - (canvasView.bounds.height - extras.keyboardInset) * 0.4
+        let maxY = canvasView.contentSize.height + extras.keyboardInset - canvasView.bounds.height
+        canvasView.setContentOffset(CGPoint(x: canvasView.contentOffset.x, y: max(0, min(maxY, y))), animated: true)
     }
 
     // MARK: Shape snapping (draw and hold)
@@ -577,6 +756,14 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         snap.original = CGPoint(x: anchor.x == b.minX ? b.maxX : b.minX, y: anchor.y == b.minY ? b.maxY : b.minY)
         if case .line(let a, _) = shape { snap.anchor = a }
         snap.snapPoint = snap.points.last ?? start
+        if let inking = tool.pkTool() as? PKInkingTool {
+            snap.ink = inking.ink
+            snap.width = inking.width
+        }
+        // Stop PencilKit drawing the raw stroke: the clean shape replaces it when the pencil lifts
+        // (the stroke observer keeps following the pencil for resizing).
+        canvasView.drawingGestureRecognizer.isEnabled = false
+        canvasView.drawingGestureRecognizer.isEnabled = true
         shapePreview.show(shape, color: UIColor(hex: tool.inkColorHex), width: tool.inkWidth)
         if #available(iOS 17.5, *) {
             UICanvasFeedbackGenerator(view: canvasView).alignmentOccurred(at: chrome.convert(snap.snapPoint, to: canvasView))
@@ -602,30 +789,44 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
             snap = SnapState()
             return
         }
-        snap.pending = shape
-        snap.pendingDeadline = Date().addingTimeInterval(0.6)
-        applyPendingSnapIfReady()
+        commitSnappedShape(shape)
     }
 
-    /// Replaces the stroke PencilKit just committed with the perfected shape.
-    func applyPendingSnapIfReady() {
-        guard let shape = snap.pending, snap.shape != nil, Date() < snap.pendingDeadline || snap.pendingDeadline == .distantPast else { return }
-        var d = canvasView.drawing
-        guard d.strokes.count > snap.strokeCountAtBegin, let last = d.strokes.last else { return }
-        let sizes = last.path.map { $0.size.width }
-        let width = sizes.isEmpty ? tool.inkWidth : sizes.sorted()[sizes.count / 2]
-        let opacity = last.path.first?.opacity ?? 1
-        let edit = EditableShape(shape: shape, strokeIndex: d.strokes.count - 1, ink: last.ink, width: width,
-                                 opacity: opacity, creationDate: last.path.creationDate)
-        d.strokes[edit.strokeIndex] = edit.makeStroke()
-        isApplyingDrawing = true
-        canvasView.drawing = d
-        isApplyingDrawing = false
-        document.canvasDrawingChanged(d)
+    /// Adds the clean shape as one undoable step ("Add Shape"). PencilKit's stroke was cancelled
+    /// at the snap; anything of it that was committed anyway is dropped.
+    private func commitSnappedShape(_ shape: RecognizedShape) {
+        var d = document.drawing
+        if d.strokes.count > snap.strokeCountAtBegin {
+            d.strokes.removeSubrange(snap.strokeCountAtBegin...)
+        }
+        let fallback = PKInk(.pen, color: UIColor(hex: tool.inkColorHex))
+        let edit = EditableShape(shape: shape, strokeIndex: d.strokes.count, ink: snap.ink ?? fallback,
+                                 width: snap.width, opacity: 1, creationDate: Date())
+        d.strokes.append(edit.makeStroke())
+        lateStrokeGuard = (count: d.strokes.count, date: Date(), until: Date().addingTimeInterval(0.8))
+        document.replaceDrawing(d, actionName: "Add Shape")
         shapePreview.clear()
         host?.canvasShapeSnapped(shape.name)
         snap = SnapState()
         beginShapeEditing(edit)
+        host?.canvasStudentWrote(docRects: [shape.bounds])
+    }
+
+    /// Called when PencilKit adds strokes: a raw stroke from a snapped shape that PencilKit
+    /// committed after all (despite the cancel) is removed.
+    func applyPendingSnapIfReady() {
+        guard let g = lateStrokeGuard else { return }
+        guard Date() < g.until else { lateStrokeGuard = nil; return }
+        var d = canvasView.drawing
+        guard d.strokes.count > g.count else { return }
+        let late = d.strokes[g.count...].filter { $0.path.creationDate < g.date }
+        guard !late.isEmpty else { return }
+        d.strokes = Array(d.strokes[..<g.count]) + d.strokes[g.count...].filter { $0.path.creationDate >= g.date }
+        lateStrokeGuard = nil
+        isApplyingDrawing = true
+        canvasView.drawing = d
+        isApplyingDrawing = false
+        document.canvasDrawingChanged(d)
     }
 
     // MARK: Hover
@@ -644,7 +845,7 @@ extension NoteCanvasViewController: UITextViewDelegate, UIPencilInteractionDeleg
         switch g.state {
         case .began, .changed:
             let isEraser = tool.kind == .eraser
-            let d = isEraser ? (tool.eraserMode == .pixel ? tool.eraserWidth : 10) : tool.inkWidth
+            let d = isEraser ? tool.eraserWidth : tool.inkWidth
             hoverPreview.show(at: p, diameter: d, color: UIColor(hex: tool.inkColorHex), isEraser: isEraser, zoom: zoom)
         default:
             hoverPreview.hide()

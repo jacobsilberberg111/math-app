@@ -128,6 +128,9 @@ extension NoteCanvasViewController {
                     scrollBeforeFingers = (canvasView.contentOffset, zoom, Date())
                 }
                 fingerTouches.insert(t)
+                // A second finger means a scroll, zoom or the undo tap, not erasing: put back what
+                // this swipe had rubbed out.
+                if fingerTouches.count > 1 { endEraseSwipe(commit: false) }
             }
         default:
             break
@@ -136,10 +139,12 @@ extension NoteCanvasViewController {
         if isErasingTouch(t) { eraseTutorMarks(at: t.location(in: chrome)) }
     }
 
-    /// The eraser follows the pencil, or a finger when finger drawing is on.
+    /// The eraser follows the pencil, or a single finger when finger drawing is on (two fingers
+    /// are a scroll or a gesture, never erasing).
     private func isErasingTouch(_ t: UITouch) -> Bool {
         guard tool.kind == .eraser else { return false }
-        return pencilTouches.contains(t) || (tool.fingerDrawing && fingerTouches.contains(t))
+        if pencilTouches.contains(t) { return true }
+        return tool.fingerDrawing && fingerTouches.count == 1 && fingerTouches.contains(t) && palmTouches.isEmpty
     }
 
     private func watchedTouchMoved(_ t: UITouch) {
@@ -163,7 +168,16 @@ extension NoteCanvasViewController {
     }
 
     private func watchedTouchEnded(_ t: UITouch) {
+        // The eraser lifting ends its swipe: what it rubbed out is removed as one undo step.
+        if extras.erasing, isErasingTouch(t) || pencilTouches.contains(t) {
+            endEraseSwipe(commit: fingerTouches.count <= 1)
+        }
         let wasPencil = pencilTouches.remove(t) != nil
+        // Auto-deselect: after erasing with the pencil, go back to the tool used before.
+        if wasPencil, tool.kind == .eraser, tool.eraserAutoDeselect, previousToolKind != .eraser {
+            let back = previousToolKind
+            DispatchQueue.main.async { [weak self] in self?.host?.canvasRequestTool(back) }
+        }
         let wasPalm = palmTouches.remove(t) != nil
         // With finger drawing on, the next finger stroke right after this one must still draw.
         if wasPencil || (wasPalm && !tool.fingerDrawing) {

@@ -56,16 +56,16 @@ extension NoteCanvasViewController {
             var strokes = document.drawing.strokes
             for i in indices {
                 let s = strokes[i]
-                strokes[i].ink = PKInk(s.ink.inkType, color: color)
+                // Keep each stroke's own transparency, so highlighter stays see-through.
+                strokes[i].ink = PKInk(s.ink.inkType, color: color.withAlphaComponent(s.ink.color.cgColor.alpha))
             }
             replaceLassoStrokes(strokes, actionName: "Colour")
         }
         for id in lasso.elementIDs {
             document.update(id, actionName: "Colour") { e in
                 switch e.kind {
-                case .text(var t):
-                    t.colorHex = hex
-                    e.kind = .text(t)
+                case .text(let t):
+                    e.kind = .text(StudentText.recolored(t, hex: hex))
                 case .math(var m):
                     m.colorHex = hex
                     e.kind = .math(m)

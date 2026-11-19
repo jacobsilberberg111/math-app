@@ -3,11 +3,12 @@ import PencilKit
 import UIKit
 
 enum LibrarySort: String, CaseIterable, Identifiable {
-    case modified, created, title
+    case modified, opened, created, title
     var id: String { rawValue }
     var title: String {
         switch self {
         case .modified: return "Date Modified"
+        case .opened: return "Last Opened"
         case .created: return "Date Created"
         case .title: return "Title"
         }
@@ -18,11 +19,15 @@ enum LibrarySort: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class LibraryStore {
+    /// The notes in the library. Deleted ones aren't here (so no list, search or count shows
+    /// them): they're in `trash`.
     var notes: [NoteMeta] = []
+    /// Recently Deleted: notes waiting to be restored or removed for good, newest first.
+    var trash: [NoteMeta] = []
     var subjects: [Subject] = []
-    /// Thumbnail cache keyed by note id. Not observed directly (it is filled lazily while views
-    /// render); views observe `thumbnailVersion` instead.
-    @ObservationIgnored var thumbnails: [UUID: UIImage] = [:]
+    /// Thumbnail cache keyed by note id, trimmed under memory pressure. Not observed directly (it
+    /// is filled lazily while views render); views observe `thumbnailVersion` instead.
+    @ObservationIgnored private let thumbnails = NSCache<NSUUID, UIImage>()
     var thumbnailVersion = 0
     /// A note that arrived from outside (a note file from AirDrop or Files) and should be opened;
     /// whichever view shows notes clears it.
@@ -31,6 +36,7 @@ final class LibraryStore {
     var importFailure: String?
 
     init() {
+        thumbnails.countLimit = 150
         load()
     }
 
@@ -40,13 +46,15 @@ final class LibraryStore {
         let fm = FileManager.default
         let folders = (try? fm.contentsOfDirectory(at: Storage.notesDir, includingPropertiesForKeys: nil)) ?? []
         var loaded: [NoteMeta] = []
+        var deleted: [NoteMeta] = []
         for folder in folders {
-            if let meta = Storage.read(NoteMeta.self, from: folder.appendingPathComponent("meta.json")) {
-                loaded.append(meta)
-            }
+            guard let meta = Storage.read(NoteMeta.self, from: folder.appendingPathComponent("meta.json")) else { continue }
+            if meta.deletedAt == nil { loaded.append(meta) } else { deleted.append(meta) }
         }
         notes = loaded
-        if notes.isEmpty && subjects.isEmpty {
+        trash = deleted.sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }
+        purgeExpiredTrash()
+        if notes.isEmpty && subjects.isEmpty && trash.isEmpty {
             seedWelcome()
         }
     }
@@ -78,6 +86,8 @@ final class LibraryStore {
     func sorted(_ items: [NoteMeta], by sort: LibrarySort) -> [NoteMeta] {
         switch sort {
         case .modified: return items.sorted { $0.modifiedAt > $1.modifiedAt }
+        // Notes never opened (made before this was recorded) go by when they were last edited.
+        case .opened: return items.sorted { ($0.lastOpenedAt ?? $0.modifiedAt) > ($1.lastOpenedAt ?? $1.modifiedAt) }
         case .created: return items.sorted { $0.createdAt > $1.createdAt }
         case .title: return items.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
@@ -137,7 +147,7 @@ final class LibraryStore {
                             paper: PaperStyle(pattern: .blank, color: .white))
         let doc = NoteDocument.create(meta: meta, content: NoteContent())
         guard let asset = doc.storePDF(from: paper), doc.pdf(asset) != nil else {
-            delete(meta)
+            deleteNow(meta)
             return nil
         }
         doc.importPDFPages(assetID: asset, replaceFirstBlankPage: true)
@@ -179,7 +189,7 @@ final class LibraryStore {
         let meta = NoteMeta(title: title, subjectID: subjectID, paper: PaperStyle(pattern: .blank, color: .white))
         let doc = NoteDocument.create(meta: meta, content: NoteContent())
         guard let asset = doc.storePDF(from: url) else {
-            delete(meta)
+            deleteNow(meta)
             return nil
         }
         doc.importPDFPages(assetID: asset, replaceFirstBlankPage: true)
@@ -191,6 +201,11 @@ final class LibraryStore {
     func update(_ meta: NoteMeta) {
         if let i = notes.firstIndex(where: { $0.id == meta.id }) {
             notes[i] = meta
+        } else if let i = trash.firstIndex(where: { $0.id == meta.id }) {
+            // A deleted note stays deleted (e.g. a late save from its editor).
+            var m = meta
+            m.deletedAt = trash[i].deletedAt
+            trash[i] = m
         } else {
             notes.append(meta)
         }
@@ -214,11 +229,50 @@ final class LibraryStore {
         persist(m)
     }
 
+    // MARK: Recently Deleted
+
+    /// Moves a note to Recently Deleted. Nothing is removed yet: it can be restored for 30 days.
     func delete(_ meta: NoteMeta) {
+        var m = notes.first { $0.id == meta.id } ?? meta
+        guard m.deletedAt == nil else { return }
+        m.deletedAt = Date()
+        notes.removeAll { $0.id == m.id }
+        trash.insert(m, at: 0)
+        writeMeta(m)
+    }
+
+    /// Brings a note back from Recently Deleted, to where it was (or Unfiled if its subject has gone).
+    func restore(_ meta: NoteMeta) {
+        guard let i = trash.firstIndex(where: { $0.id == meta.id }) else { return }
+        var m = trash.remove(at: i)
+        m.deletedAt = nil
+        if subject(m.subjectID) == nil { m.subjectID = nil }
+        notes.append(m)
+        writeMeta(m)
+    }
+
+    /// Removes a note and its files for good.
+    func deleteNow(_ meta: NoteMeta) {
         notes.removeAll { $0.id == meta.id }
-        thumbnails[meta.id] = nil
+        trash.removeAll { $0.id == meta.id }
+        thumbnails.removeObject(forKey: meta.id as NSUUID)
+        CanvasPositionMemory.forget(meta.id)
         let folder = Storage.folder(for: meta.id)
         Storage.ioQueue.async { try? FileManager.default.removeItem(at: folder) }
+    }
+
+    func emptyTrash() {
+        for meta in trash { deleteNow(meta) }
+    }
+
+    /// Notes deleted more than 30 days ago go for good (checked on launch).
+    private func purgeExpiredTrash() {
+        for meta in trash where TrashPolicy.isExpired(deletedAt: meta.deletedAt ?? .distantPast) { deleteNow(meta) }
+    }
+
+    private func writeMeta(_ meta: NoteMeta) {
+        let url = Storage.folder(for: meta.id).appendingPathComponent("meta.json")
+        Storage.ioQueue.async { try? Storage.write(meta, to: url) }
     }
 
     func duplicate(_ meta: NoteMeta) {
@@ -297,10 +351,15 @@ final class LibraryStore {
         saveSubjects()
     }
 
+    /// Deletes a subject; its notes stay, in Unfiled.
     func deleteSubject(_ subject: Subject) {
         subjects.removeAll { $0.id == subject.id }
         for meta in notes where meta.subjectID == subject.id {
             move(meta, to: nil)
+        }
+        for (i, meta) in trash.enumerated() where meta.subjectID == subject.id {
+            trash[i].subjectID = nil
+            writeMeta(trash[i])
         }
         saveSubjects()
     }
@@ -308,17 +367,17 @@ final class LibraryStore {
     // MARK: Thumbnails
 
     func thumbnail(for meta: NoteMeta) -> UIImage? {
-        if let img = thumbnails[meta.id] { return img }
+        if let img = thumbnails.object(forKey: meta.id as NSUUID) { return img }
         let url = Storage.folder(for: meta.id).appendingPathComponent("thumb.jpg")
         if let img = UIImage(contentsOfFile: url.path) {
-            thumbnails[meta.id] = img
+            thumbnails.setObject(img, forKey: meta.id as NSUUID)
             return img
         }
         return nil
     }
 
     func setThumbnail(_ image: UIImage, for id: UUID) {
-        thumbnails[id] = image
+        thumbnails.setObject(image, forKey: id as NSUUID)
         thumbnailVersion += 1
         if let data = image.jpegData(compressionQuality: 0.8) {
             let url = Storage.folder(for: id).appendingPathComponent("thumb.jpg")

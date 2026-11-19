@@ -148,20 +148,39 @@ extension NoteCanvasViewController {
         for (i, stroke) in document.drawing.strokes.enumerated() where lassoEncloses(stroke, loop: path, box: box) {
             strokes.append(i)
         }
-        let elements = document.content.elements.filter { path.contains(document.docRect(for: $0).center, using: .evenOdd) }
+        // An item is in when most of it is inside the loop (not just its centre), so circling ink
+        // written over a picture or graph doesn't grab the picture too.
+        let elements = document.content.elements.filter { lassoEncloses(rect: document.docRect(for: $0), loop: path, box: box) }
         setLassoSelection(strokes: strokes, elements: elements.map(\.id))
+    }
+
+    /// At least 60% of a 5×5 grid of sample points across the item lie inside the loop.
+    private func lassoEncloses(rect: CGRect, loop: CGPath, box: CGRect) -> Bool {
+        guard rect.intersects(box) else { return false }
+        var inside = 0
+        for i in 0..<5 {
+            for j in 0..<5 {
+                let p = CGPoint(x: rect.minX + rect.width * (CGFloat(i) + 0.5) / 5, y: rect.minY + rect.height * (CGFloat(j) + 0.5) / 5)
+                if loop.contains(p, using: .winding) { inside += 1 }
+            }
+        }
+        return inside >= 15
     }
 
     /// A stroke is in when at least half of its sampled points are inside the loop.
     private func lassoEncloses(_ stroke: PKStroke, loop: CGPath, box: CGRect) -> Bool {
         let bounds = stroke.renderBounds
         guard bounds.intersects(box) else { return false }
-        let step = max(4, hypot(bounds.width, bounds.height) / 30)
+        // Sample evenly along the whole stroke (about 60 points, however long it is). The winding
+        // rule means a loop that overshoots its start, or goes round twice, still counts as inside.
+        let length = max(1, stroke.path.reduce((0 as CGFloat, nil as CGPoint?)) { acc, p in
+            (acc.0 + (acc.1.map { hypot(p.location.x - $0.x, p.location.y - $0.y) } ?? 0), p.location)
+        }.0)
+        let step = max(2, length / 60)
         var inside = 0, total = 0
         for point in stroke.path.interpolatedPoints(by: .distance(step)) {
             total += 1
-            if loop.contains(point.location.applying(stroke.transform), using: .evenOdd) { inside += 1 }
-            if total >= 150 { break }
+            if loop.contains(point.location.applying(stroke.transform), using: .winding) { inside += 1 }
         }
         return total > 0 && inside * 2 >= total
     }
@@ -169,6 +188,7 @@ extension NoteCanvasViewController {
     /// Makes these strokes (by index) and items the lasso selection and shows its box.
     func setLassoSelection(strokes: [Int], elements: [String]) {
         if selectedElementID != nil { select(nil) }
+        takeKeyFocus()
         lasso.strokes = strokes
         lasso.elementIDs = elements
         lasso.bounds = lassoBounds()
@@ -394,10 +414,10 @@ extension NoteCanvasViewController {
         // A move or rotation keeps an item's size exactly; only a resize re-measures it.
         let scales = abs(k - 1) > 0.001
         switch e.kind {
-        case .text(var text) where scales:
-            let fontSize = max(6, min(240, text.fontSize * k))
-            let applied = fontSize / max(text.fontSize, 1)
-            text.fontSize = fontSize
+        case .text(let original) where scales:
+            // Every run's font scales (formatted student text keeps its mix of sizes).
+            let text = StudentText.scaled(original, by: k)
+            let applied = text.fontSize / max(original.fontSize, 1)
             e.kind = .text(text)
             size = ElementRenderer.measureText(text, author: e.author, width: old.width * applied, env: env)
         case .math(var math) where scales:
@@ -564,7 +584,7 @@ extension NoteCanvasViewController {
     }
 
     private func pasteText(_ text: String, centredAt centre: CGPoint) {
-        let content = TextContent(text: text, style: .typed, fontSize: 20, colorHex: tool.penColorHex, rich: false)
+        let content = TextContent(text: text, style: .typed, fontSize: tool.textSize, colorHex: tool.textColorHex, rich: false)
         let env = environment()
         let width = ElementRenderer.fittedTextWidth(content, author: .student, maxWidth: min(420, document.pageSize.width - 64), env: env)
         let size = ElementRenderer.measureText(content, author: .student, width: width, env: env)

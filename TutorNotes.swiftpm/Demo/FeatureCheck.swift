@@ -47,6 +47,7 @@ extension DemoDirector {
         await checkPages(model, canvas)
         await checkExport(model, library)
         await checkColours(model, canvas)
+        await checkText(model, canvas)
         await checkScrolling(model, canvas)
         await checkSubjects(model, library)
         finishFeatureCheck()
@@ -314,7 +315,7 @@ extension DemoDirector {
         // Undoing a move after a page was added since keeps the new page.
         model.movePage(from: 1, to: 0)
         await wait(0.3)
-        doc.appendPage()
+        doc.appendPage(undoable: false)
         await wait(0.3)
         model.undo()
         await wait(0.3)

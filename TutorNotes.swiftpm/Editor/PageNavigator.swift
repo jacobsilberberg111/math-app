@@ -6,6 +6,7 @@ import SwiftUI
 struct PageNavigator: View {
     @Bindable var model: EditorModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.displayScale) private var displayScale
     /// Thumbnails by page id, so a page keeps its picture when it moves.
     @State private var thumbs: [UUID: UIImage] = [:]
     @State private var pendingDelete: Int?
@@ -34,30 +35,26 @@ struct PageNavigator: View {
                 ToolbarItem(placement: .primaryAction) { PageSizeMenu(model: model) }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        model.document.appendPage()
-                        refresh()
+                        model.appendPage(show: false)
                     } label: { Label("Add Page", systemImage: "plus") }
                 }
             }
             // The pages change shape: don't show the old thumbnails while the new ones render.
             .onChange(of: model.document.content.pageSize) { refresh() }
-            .confirmationDialog("Delete this page? Its ink and items will be removed. This can't be undone.",
+            .onDisappear { PageThumbnails.shared.releaseInk() }
+            .confirmationDialog("Delete this page? Its ink and items go with it. Undo brings them back.",
                                 isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
                                 titleVisibility: .visible) {
                 Button("Delete Page", role: .destructive) {
-                    if let i = pendingDelete { model.document.deletePage(i) }
+                    if let i = pendingDelete { model.deletePage(i) }
                     pendingDelete = nil
-                    // The canvas only reports page changes on scroll; don't leave "Page 5 of 4"
-                    // (or make Paper "this page" fall through to every page).
-                    model.currentPage = min(model.currentPage, model.pageCount - 1)
-                    refresh()
                 }
             }
         }
     }
 
     private func cell(_ i: Int, _ page: Page) -> some View {
-        PageCell(number: i + 1, thumb: thumbs[page.id],
+        PageCell(number: i + 1, thumb: thumbs[page.id] ?? PageThumbnails.shared.latest(page.id, pageSize: model.document.content.pageSize),
                  aspect: model.document.pageSize.width / model.document.pageSize.height,
                  isCurrent: i == model.currentPage, isDropTarget: dropTarget == page.id)
             .onTapGesture {
@@ -76,13 +73,16 @@ struct PageNavigator: View {
                 }
             }
             .task(id: model.document.revision) {
-                thumbs[page.id] = PageRenderer.thumbnail(model.document, page: i, width: 220)
+                // Drawn in the background and kept per page: only pages that changed redraw.
+                if let image = await PageThumbnails.shared.thumbnail(model.document, page: i, width: 220, scale: displayScale) {
+                    thumbs[page.id] = image
+                }
             }
     }
 
     @ViewBuilder private func menu(for i: Int) -> some View {
-        Button { model.document.insertPage(after: i); refresh() } label: { Label("Insert Page After", systemImage: "doc.badge.plus") }
-        Button { model.document.duplicatePage(i); refresh() } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+        Button { model.insertPage(after: i) } label: { Label("Insert Page After", systemImage: "doc.badge.plus") }
+        Button { model.duplicatePage(i) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
         Button(role: .destructive) { pendingClear = i } label: { Label("Clear Page", systemImage: "eraser") }
         if pages.count > 1 {
             Button(role: .destructive) { pendingDelete = i } label: { Label("Delete Page", systemImage: "trash") }
@@ -114,6 +114,7 @@ struct PageNavigator: View {
         return true
     }
 
+    /// The pages changed shape: the old pictures would be the wrong shape until the new ones are drawn.
     private func refresh() {
         thumbs.removeAll()
     }

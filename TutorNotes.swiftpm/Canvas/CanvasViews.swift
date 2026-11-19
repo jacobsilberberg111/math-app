@@ -11,15 +11,23 @@ class PassthroughView: UIView {
 
 // MARK: - Pages
 
+/// A tiled layer whose tiles appear at once: the default fade made PDF pages flash on every
+/// zoom and whenever a page came back into range.
+private final class InstantTiledLayer: CATiledLayer {
+    override class func fadeDuration() -> CFTimeInterval { 0 }
+}
+
 final class PDFTiledView: UIView {
-    override class var layerClass: AnyClass { CATiledLayer.self }
+    override class var layerClass: AnyClass { InstantTiledLayer.self }
 
     private let pdfPage: CGPDFPage
 
     init(page: CGPDFPage, frame: CGRect) {
         self.pdfPage = page
         super.init(frame: frame)
-        backgroundColor = .white
+        // Clear until each tile draws (tiles fill their own white), so the preview underneath
+        // shows instead of a blank page.
+        backgroundColor = .clear
         isUserInteractionEnabled = false
         if let tiled = layer as? CATiledLayer {
             tiled.levelsOfDetail = 4
@@ -38,6 +46,42 @@ final class PDFTiledView: UIView {
     }
 }
 
+/// Small renders of PDF pages, drawn off the main thread and shown under the sharp tiles while
+/// they draw, so a PDF page never flashes white.
+final class PDFPreviewCache {
+    static let shared = PDFPreviewCache()
+    private let cache = NSCache<NSString, CGImage>()
+    private let queue = DispatchQueue(label: "Margin.pdf-previews", qos: .userInitiated)
+    /// Preview width in pixels: enough to read the page at fit-width while the tiles catch up.
+    private static let width: CGFloat = 560
+
+    init() { cache.countLimit = 24 }
+
+    func image(_ key: String) -> CGImage? { cache.object(forKey: key as NSString) }
+
+    func render(_ key: String, page: CGPDFPage, aspect: CGFloat, completion: @escaping (CGImage) -> Void) {
+        queue.async { [cache] in
+            if let done = cache.object(forKey: key as NSString) {
+                DispatchQueue.main.async { completion(done) }
+                return
+            }
+            let size = CGSize(width: PDFPreviewCache.width, height: (PDFPreviewCache.width * aspect).rounded())
+            guard size.height > 0 else { return }
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            let image = UIGraphicsImageRenderer(size: size, format: format).image { rc in
+                rc.cgContext.setFillColor(UIColor.white.cgColor)
+                rc.cgContext.fill(CGRect(origin: .zero, size: size))
+                PaperRenderer.drawPDFPage(page, in: CGRect(origin: .zero, size: size), ctx: rc.cgContext)
+            }
+            guard let cg = image.cgImage else { return }
+            cache.setObject(cg, forKey: key as NSString)
+            DispatchQueue.main.async { completion(cg) }
+        }
+    }
+}
+
 final class PageBackgroundView: UIView {
     private let pdfContainer = UIView()
     private let patternView = UIView()
@@ -49,6 +93,7 @@ final class PageBackgroundView: UIView {
     private let numberLabel = UILabel()
     private(set) var configuredPage: Page?
     private var configuredTileRect: CGRect?
+    private var renderScale: CGFloat = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -101,7 +146,9 @@ final class PageBackgroundView: UIView {
         accent.lineWidth = 1
         pdfView?.removeFromSuperview()
         pdfView = nil
+        pdfContainer.layer.contents = nil
         if let pdf, let idx = page.pdfPageIndex, let p = pdf.page(at: idx + 1) {
+            showPreview(of: p, key: "\(page.pdfAssetID ?? "")#\(idx)", size: size)
             let v = PDFTiledView(page: p, frame: CGRect(origin: .zero, size: size))
             pdfContainer.addSubview(v)
             pdfView = v
@@ -110,6 +157,42 @@ final class PageBackgroundView: UIView {
         } else {
             patternView.alpha = 1
         }
+    }
+
+    private func showPreview(of pdfPage: CGPDFPage, key: String, size: CGSize) {
+        pdfContainer.layer.contentsGravity = .resize
+        if let cached = PDFPreviewCache.shared.image(key) {
+            pdfContainer.layer.contents = cached
+            return
+        }
+        let pageID = configuredPage?.id
+        PDFPreviewCache.shared.render(key, page: pdfPage, aspect: size.height / max(size.width, 1)) { [weak self] image in
+            // The view may have been given another page meanwhile.
+            guard let self, self.configuredPage?.id == pageID, self.pdfView != nil else { return }
+            self.pdfContainer.layer.contents = image
+        }
+    }
+
+    /// Forgets the page it showed, ready to be configured for another (see the canvas's page pool).
+    func prepareForReuse() {
+        pdfView?.removeFromSuperview()
+        pdfView = nil
+        pdfContainer.layer.contents = nil
+        configuredPage = nil
+        configuredTileRect = nil
+    }
+
+    /// The pixels per point the paper lines and page number are drawn at: higher when zoomed in
+    /// so they stay crisp. The layers redraw only when it changes.
+    func setRenderScale(_ scale: CGFloat) {
+        guard abs(scale - renderScale) > 0.05 else { return }
+        renderScale = scale
+        for l in [light, strong, dots, accent] {
+            l.contentsScale = scale
+            l.setNeedsDisplay()
+        }
+        numberLabel.contentScaleFactor = scale
+        numberLabel.setNeedsDisplay()
     }
 
     /// One tile of a freeform board: paper and pattern for `rect` (board coordinates), with no
@@ -123,6 +206,7 @@ final class PageBackgroundView: UIView {
         numberLabel.isHidden = true
         pdfView?.removeFromSuperview()
         pdfView = nil
+        pdfContainer.layer.contents = nil
         patternView.alpha = 1
         pdfContainer.frame = CGRect(origin: .zero, size: rect.size)
         patternView.frame = CGRect(origin: .zero, size: rect.size)
@@ -530,25 +614,78 @@ final class PulseView: UIView {
 /// UITextView used for editing text boxes in place. Supports Scribble automatically.
 final class CanvasTextView: UITextView {
     var elementID: String?
+    /// The box style (plain text, heading, side note, sticky note), shown while editing as it will be on the page.
+    var style: TextStyle = .typed
+    /// The box's base font size (headings draw 1.4× this).
+    var baseSize: CGFloat = 18
+    /// Editing a tutor box: its words stay in the tutor's font and keep their `$math$` / `**bold**` markup.
+    var tutorContent: TextContent?
+    /// Widest the box may grow to as you type (to the page's right margin).
+    var maxWidth: CGFloat = 360
+    /// The canvas zoom, so the border stays a hairline.
+    var zoom: CGFloat = 1 { didSet { layer.borderWidth = 1 / max(zoom, 0.1) } }
     /// Typing undo stays with this short-lived view instead of landing on the note's shared stack.
     private let typingUndoManager = UndoManager()
     override var undoManager: UndoManager? { typingUndoManager }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
-        backgroundColor = UIColor.systemBlue.withAlphaComponent(0.04)
         isScrollEnabled = false
-        textContainerInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
-        // `self.`: the init parameter of the same name is nil here. Must match PlainTextRenderer (no padding).
+        // `self.`: the init parameter of the same name is nil here. Must match the renderer (no padding).
         self.textContainer.lineFragmentPadding = 0
         layer.borderColor = UIColor.systemBlue.withAlphaComponent(0.5).cgColor
         layer.borderWidth = 1
         layer.cornerRadius = 4
         autocorrectionType = .default
         smartQuotesType = .no
+        smartDashesType = .no
+        applyStyleDecoration()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Insets and background matching how the box is drawn on the page.
+    func applyStyleDecoration() {
+        textContainerInset = ElementRenderer.textInsets(style)
+        backgroundColor = style == .sticky ? UIColor(hex: "#FFF4B8") : UIColor.systemBlue.withAlphaComponent(0.04)
+    }
+
+    /// Any paragraph centred or right-aligned: the box then keeps its full width instead of hugging the text.
+    var hasNonLeftAlignment: Bool {
+        var found = false
+        textStorage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: textStorage.length)) { v, _, stop in
+            if let p = v as? NSParagraphStyle, p.alignment == .center || p.alignment == .right {
+                found = true
+                stop.pointee = true
+            }
+        }
+        if let p = typingAttributes[.paragraphStyle] as? NSParagraphStyle, p.alignment == .center || p.alignment == .right { found = true }
+        return found
+    }
+
+    /// Return inside a list continues it ("• " or the next number), or ends it on an empty item.
+    /// Returns false when it handled the newline itself.
+    func handleReturn(in range: NSRange) -> Bool {
+        let ns = textStorage.string as NSString
+        let lineRange = ns.lineRange(for: NSRange(location: range.location, length: 0))
+        var line = ns.substring(with: lineRange)
+        if line.hasSuffix("\n") { line.removeLast() }
+        guard let prefix = CanvasTextView.listPrefix(of: line) else { return true }
+        let attrs = typingAttributes
+        if line == prefix {
+            // Empty item: end the list.
+            textStorage.replaceCharacters(in: NSRange(location: lineRange.location, length: (prefix as NSString).length), with: "")
+            selectedRange = NSRange(location: lineRange.location, length: 0)
+        } else {
+            var next = prefix
+            if let n = Int(prefix.dropLast(2)) { next = "\(n + 1). " }
+            textStorage.replaceCharacters(in: range, with: NSAttributedString(string: "\n" + next, attributes: attrs))
+            selectedRange = NSRange(location: range.location + 1 + (next as NSString).length, length: 0)
+        }
+        typingAttributes = attrs
+        delegate?.textViewDidChange?(self)
+        return false
+    }
 }
 
 /// Shape preview while the pencil is held after drawing (draw-and-hold snapping).

@@ -25,6 +25,7 @@ struct EditorTopBar: View {
     @State private var clearingPage: Int?
     @State private var showPenStyles = false
     @State private var showEraserOptions = false
+    @State private var showTextOptions = false
     @State private var editingColorIndex: Int?
     @State private var showWidths = false
     @State private var showInkOptions = false
@@ -179,6 +180,7 @@ struct EditorTopBar: View {
             if selected {
                 if kind == .pen { showPenStyles = true }
                 if kind == .eraser { showEraserOptions = true }
+                if kind == .text { showTextOptions = true }
             } else {
                 model.selectTool(kind)
                 if kind == .lasso { model.flash("Circle anything to select it") }
@@ -200,11 +202,14 @@ struct EditorTopBar: View {
         .buttonStyle(.plain)
         .accessibilityLabel(kind.title)
         .help(kind.title)
-        .popover(isPresented: Binding(get: { (kind == .pen && showPenStyles) || (kind == .eraser && showEraserOptions) },
-                                      set: { if !$0 { showPenStyles = false; showEraserOptions = false } })) {
+        .popover(isPresented: Binding(get: { (kind == .pen && showPenStyles) || (kind == .eraser && showEraserOptions)
+                                                || (kind == .text && showTextOptions) },
+                                      set: { if !$0 { showPenStyles = false; showEraserOptions = false; showTextOptions = false } })) {
             Group {
                 if kind == .pen {
                     PenStylePicker(selection: Binding(get: { tools.penStyle }, set: { tools.penStyle = $0; showPenStyles = false }))
+                } else if kind == .text {
+                    TextToolOptions(tools: tools)
                 } else {
                     EraserOptions(tools: tools)
                 }
@@ -687,28 +692,95 @@ struct WidthPicker: View {
     }
 }
 
-/// Stroke or pixel erasing, and the pixel eraser's size.
+/// New text boxes: their style and size (the colour comes from the swatches beside the tools).
+@MainActor
+struct TextToolOptions: View {
+    let tools: ToolState
+    static let styles: [(TextStyle, String, String)] = [
+        (.typed, "Text", "textformat"), (.heading, "Heading", "textformat.size.larger"),
+        (.note, "Side Note", "text.alignleft"), (.sticky, "Sticky", "note.text"),
+    ]
+    static let sizes: [(String, CGFloat)] = [("S", 14), ("M", 18), ("L", 24), ("XL", 32)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Text").font(.headline)
+            HStack(spacing: 8) {
+                ForEach(TextToolOptions.styles, id: \.1) { style, title, symbol in
+                    let on = tools.textStyle == style || (style == .typed && tools.textStyle == .handwriting)
+                    Button {
+                        tools.textStyle = style
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: symbol).font(.system(size: 17))
+                            Text(title).font(.caption2)
+                        }
+                        .frame(width: 62, height: 50)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(on ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            HStack(spacing: 8) {
+                Text("Size").font(.subheadline)
+                ForEach(TextToolOptions.sizes, id: \.0) { name, size in
+                    Button(name) { tools.textSize = size }
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 36, height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(abs(tools.textSize - size) < 0.5 ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08)))
+                        .buttonStyle(.plain)
+                }
+                Spacer()
+                Text("\(Int(tools.textSize)) pt").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Slider(value: Binding(get: { Double(tools.textSize) }, set: { tools.textSize = CGFloat($0.rounded()) }), in: 10...48)
+            Text("Select text while typing for bold, italic, lists, colours and alignment.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(width: 320)
+    }
+}
+
+/// Stroke or precision erasing, the eraser's size (presets plus fine-tuning, for both modes), and
+/// switching back to the previous tool after erasing.
 @MainActor
 struct EraserOptions: View {
     let tools: ToolState
+    static let presets: [(String, CGFloat)] = [("S", 8), ("M", 20), ("L", 44)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Eraser").font(.headline)
             Picker("Eraser", selection: Binding(get: { tools.eraserMode }, set: { tools.eraserMode = $0 })) {
                 Text("Whole Stroke").tag(EraserMode.stroke)
-                Text("Pixel").tag(EraserMode.pixel)
+                Text("Precision").tag(EraserMode.pixel)
             }
             .pickerStyle(.segmented)
-            if tools.eraserMode == .pixel {
-                HStack {
-                    Text("Size").font(.subheadline)
-                    Slider(value: Binding(get: { Double(tools.eraserWidth) }, set: { tools.eraserWidth = CGFloat($0) }), in: 4...80)
+            Text(tools.eraserMode == .stroke ? "Removes any stroke it touches." : "Rubs out only what it passes over.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Text("Size").font(.subheadline)
+                ForEach(EraserOptions.presets, id: \.0) { name, w in
+                    Button {
+                        tools.eraserWidth = w
+                    } label: {
+                        Circle()
+                            .strokeBorder(Color.primary.opacity(0.6), lineWidth: 1.5)
+                            .frame(width: 10 + w / 2.4, height: 10 + w / 2.4)
+                            .frame(width: 34, height: 34)
+                            .background(Circle().fill(abs(tools.eraserWidth - w) < 1 ? Color.accentColor.opacity(0.18) : .clear))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Size \(name)")
                 }
             }
+            Slider(value: Binding(get: { Double(tools.eraserWidth) }, set: { tools.eraserWidth = CGFloat($0) }), in: 4...80)
+            Toggle("Switch back after erasing", isOn: Binding(get: { tools.eraserAutoDeselect }, set: { tools.eraserAutoDeselect = $0 }))
+                .font(.subheadline)
         }
         .padding(16)
-        .frame(width: 280)
+        .frame(width: 300)
     }
 }
 

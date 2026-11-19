@@ -117,14 +117,8 @@ struct NoteEditorView: View {
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
         .fileImporter(isPresented: $showPDFImporter, allowedContentTypes: [.pdf]) { result in
             guard case .success(let url) = result else { return }
-            if let asset = model.document.storePDF(from: url) {
-                model.document.importPDFPages(assetID: asset, replaceFirstBlankPage: true)
-                // The import may have replaced a blank first page, so find where its pages landed.
-                if let first = model.document.content.pages.firstIndex(where: { $0.pdfAssetID == asset }) {
-                    model.canvas?.scrollToPage(first)
-                    return
-                }
-            }
+            // The import may replace a blank first page; it shows the first of the PDF's pages.
+            if let asset = model.document.storePDF(from: url), model.importPDF(assetID: asset) { return }
             model.flash("Couldn't import that PDF")
         }
         .alert("Microphone access is off", isPresented: Binding(get: { model.audio.permissionDenied },
@@ -184,6 +178,7 @@ struct NoteEditorView: View {
 
                 VStack(spacing: 10) {
                     Spacer()
+                    PageIndicatorPill(model: model)
                     if let s = model.tutor.suggestion {
                         SuggestionPill(suggestion: s, action: { handle(s) }, dismiss: { model.tutor.dismissSuggestion() })
                     }
@@ -242,10 +237,7 @@ struct NoteEditorView: View {
             model.flash("Couldn't add the scan")
             return
         }
-        model.document.importPDFPages(assetID: asset, replaceFirstBlankPage: true)
-        if let first = model.document.content.pages.firstIndex(where: { $0.pdfAssetID == asset }) {
-            model.canvas?.scrollToPage(first)
-        }
+        model.importPDF(assetID: asset)
         model.flash("Added \(pages.count) page\(pages.count == 1 ? "" : "s")")
     }
 

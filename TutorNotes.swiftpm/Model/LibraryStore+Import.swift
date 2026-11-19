@@ -44,6 +44,7 @@ extension LibraryStore {
         meta.modifiedAt = Date()
         meta.hasTutorSession = false
         meta.lastOpenedAt = nil
+        meta.deletedAt = nil
         if subject(meta.subjectID) == nil { meta.subjectID = nil }
         if meta.title.trimmed.isEmpty { meta.title = "Untitled" }
         return meta

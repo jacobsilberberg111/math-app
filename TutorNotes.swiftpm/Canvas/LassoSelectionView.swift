@@ -122,7 +122,10 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
 
     private let border = CAShapeLayer()
     private let stem = CAShapeLayer()
-    private let resizeHandle = UIView()
+    /// Resize handles at the four corners (top-left, top-right, bottom-right, bottom-left); each
+    /// scales about the opposite corner.
+    private let resizeHandles = (0..<4).map { _ in UIView() }
+    private var resizeCorner = 2
     private let rotateHandle = UIView()
     private let actionBar = UIStackView()
     private let toTextButton = UIButton(type: .system)
@@ -154,10 +157,11 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
         stem.strokeColor = UIColor.systemBlue.cgColor
         layer.addSublayer(border)
         layer.addSublayer(stem)
-        for handle in [resizeHandle, rotateHandle] {
-            handle.bounds = CGRect(x: 0, y: 0, width: 24, height: 24)
+        for handle in resizeHandles + [rotateHandle] {
+            let d: CGFloat = handle === rotateHandle ? 24 : 16
+            handle.bounds = CGRect(x: 0, y: 0, width: d, height: d)
             handle.backgroundColor = .white
-            handle.layer.cornerRadius = 12
+            handle.layer.cornerRadius = d / 2
             handle.layer.borderWidth = 2
             handle.layer.borderColor = UIColor.systemBlue.cgColor
             handle.layer.shadowColor = UIColor.black.cgColor
@@ -347,8 +351,12 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
         stem.lineWidth = 1.5 * inv
         CATransaction.commit()
 
-        resizeHandle.transform = CGAffineTransform(scaleX: inv, y: inv)
-        resizeHandle.center = q[2]
+        for (i, handle) in resizeHandles.enumerated() {
+            handle.transform = CGAffineTransform(scaleX: inv, y: inv)
+            handle.center = q[i]
+            // While dragging, only the handle being pulled shows.
+            handle.isHidden = isGesturing && !(mode == .resize && resizeCorner == i)
+        }
         rotateHandle.transform = CGAffineTransform(scaleX: inv, y: inv)
         rotateHandle.center = rotatePoint
         layoutActionBar(quad: q)
@@ -391,8 +399,16 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
     private func hitMode(at p: CGPoint) -> Mode? {
         let inv = 1 / zoom
         let reach = LassoSelectionView.grabRadius * inv
-        if p.distance(to: resizeHandle.center) <= reach { return .resize }
         if !rotateHandle.isHidden && p.distance(to: rotateHandle.center) <= reach { return .rotate }
+        // The nearest corner within reach (small selections have their corners close together).
+        let near = resizeHandles.enumerated()
+            .map { (i: $0.offset, d: p.distance(to: $0.element.center)) }
+            .filter { $0.d <= reach }
+            .min { $0.d < $1.d }
+        if let near {
+            if !isGesturing { resizeCorner = near.i }
+            return .resize
+        }
         return box.insetBy(dx: -8 * inv, dy: -8 * inv).contains(p) ? .move : nil
     }
 
@@ -402,7 +418,8 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        guard accepts(touch), let v = touch.view, !v.isDescendant(of: actionBar) else { return false }
+        // A second finger mid-drag mustn't restart the drag from where it lands (the box would jump).
+        guard !isGesturing, accepts(touch), let v = touch.view, !v.isDescendant(of: actionBar) else { return false }
         startPoint = touch.location(in: self)
         mode = hitMode(at: startPoint)
         return mode != nil
@@ -444,9 +461,10 @@ final class LassoSelectionView: UIView, UIGestureRecognizerDelegate {
             return CGAffineTransform(translationX: drag.x, y: drag.y)
         case .resize:
             // Uniform scale about the opposite corner, following the handle along the diagonal.
-            let anchor = CGPoint(x: box.minX, y: box.minY)
-            let diagonal = CGPoint(x: box.maxX - anchor.x, y: box.maxY - anchor.y)
-            let handle = CGPoint(x: box.maxX + drag.x - anchor.x, y: box.maxY + drag.y - anchor.y)
+            let c = corners
+            let anchor = c[(resizeCorner + 2) % 4], grabbed = c[resizeCorner]
+            let diagonal = CGPoint(x: grabbed.x - anchor.x, y: grabbed.y - anchor.y)
+            let handle = CGPoint(x: grabbed.x + drag.x - anchor.x, y: grabbed.y + drag.y - anchor.y)
             let along = (handle.x * diagonal.x + handle.y * diagonal.y) / max(diagonal.x * diagonal.x + diagonal.y * diagonal.y, 1)
             let smallest = min(1, max(0.05, 16 / max(box.width, box.height, 1)))
             let s = min(max(along, smallest), 20)

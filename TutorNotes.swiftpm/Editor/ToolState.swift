@@ -16,6 +16,13 @@ final class ToolState {
     var highlighterWidthIndex = 1 { didSet { save() } }
     var eraserMode: EraserMode = .stroke { didSet { save() } }
     var eraserWidth: CGFloat = 20 { didSet { save() } }
+    /// Go back to the previous tool after an eraser swipe (Notability's "auto-deselect").
+    var eraserAutoDeselect = false { didSet { save() } }
+    /// Text boxes: their own colours, size and style, separate from the pen.
+    var textColors: [String] = ["#1F2328", "#1C64F2", "#E03131"] { didSet { save() } }
+    var textColorIndex = 0 { didSet { save() } }
+    var textSize: CGFloat = 18 { didSet { save() } }
+    var textStyle: TextStyle = .typed { didSet { save() } }
     var rulerActive = false
     @ObservationIgnored var lastDrawingKind: CanvasToolKind = .pen
     /// Colour slots shown in the toolbar for each tool; the palette holds everything else.
@@ -35,6 +42,11 @@ final class ToolState {
         var highlighterWidthIndex: Int
         var eraserMode: EraserMode
         var eraserWidth: CGFloat
+        var eraserAutoDeselect: Bool?
+        var textColors: [String]?
+        var textColorIndex: Int?
+        var textSize: CGFloat?
+        var textStyle: TextStyle?
     }
 
     init() {
@@ -52,6 +64,11 @@ final class ToolState {
             highlighterWidthIndex = min(s.highlighterWidthIndex, s.highlighterWidths.count - 1)
             eraserMode = s.eraserMode
             eraserWidth = s.eraserWidth
+            eraserAutoDeselect = s.eraserAutoDeselect ?? false
+            if let c = s.textColors, !c.isEmpty { textColors = c }
+            textColorIndex = min(s.textColorIndex ?? 0, textColors.count - 1)
+            textSize = s.textSize ?? 18
+            textStyle = s.textStyle ?? .typed
         }
         // Earlier versions showed five colour slots: a colour in use beyond the third moves into it.
         let last = ToolState.visibleColorSlots - 1
@@ -71,26 +88,30 @@ final class ToolState {
         let s = Stored(kind: kind, penStyle: penStyle, penColors: penColors, penColorIndex: penColorIndex, penWidths: penWidths,
                        penWidthIndex: penWidthIndex, highlighterColors: highlighterColors, highlighterColorIndex: highlighterColorIndex,
                        highlighterWidths: highlighterWidths, highlighterWidthIndex: highlighterWidthIndex, eraserMode: eraserMode,
-                       eraserWidth: eraserWidth)
+                       eraserWidth: eraserWidth, eraserAutoDeselect: eraserAutoDeselect, textColors: textColors,
+                       textColorIndex: textColorIndex, textSize: textSize, textStyle: textStyle)
         if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey: "toolState") }
     }
 
     // MARK: Current values
 
     var colors: [String] {
-        get { kind == .highlighter ? highlighterColors : penColors }
+        get { kind == .highlighter ? highlighterColors : (kind == .text ? textColors : penColors) }
     }
 
-    var colorIndex: Int { kind == .highlighter ? highlighterColorIndex : penColorIndex }
+    var colorIndex: Int { kind == .highlighter ? highlighterColorIndex : (kind == .text ? textColorIndex : penColorIndex) }
 
     func selectColor(_ i: Int) {
-        if kind == .highlighter { highlighterColorIndex = i } else { penColorIndex = i }
+        if kind == .highlighter { highlighterColorIndex = i } else if kind == .text { textColorIndex = i } else { penColorIndex = i }
     }
 
     func setColor(_ hex: String, at i: Int) {
         if kind == .highlighter {
             guard highlighterColors.indices.contains(i) else { return }
             highlighterColors[i] = hex
+        } else if kind == .text {
+            guard textColors.indices.contains(i) else { return }
+            textColors[i] = hex
         } else {
             guard penColors.indices.contains(i) else { return }
             penColors[i] = hex
@@ -126,6 +147,10 @@ final class ToolState {
         c.highlighterWidth = highlighterWidths[safe: highlighterWidthIndex] ?? 18
         c.eraserMode = eraserMode
         c.eraserWidth = eraserWidth
+        c.eraserAutoDeselect = eraserAutoDeselect
+        c.textColorHex = textColors[safe: textColorIndex] ?? "#1F2328"
+        c.textSize = textSize
+        c.textStyle = textStyle
         c.shapeRecognition = settings.shapeRecognition
         c.fingerDrawing = settings.fingerDrawing
         c.rulerActive = rulerActive

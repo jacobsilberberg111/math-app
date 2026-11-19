@@ -34,7 +34,7 @@ enum ElementRenderer {
     // MARK: Fonts per element
 
     static func font(for t: TextContent, author: Author, env: RenderEnvironment) -> UIFont {
-        if author == .student && !t.rich { return NoteFonts.studentFont(size: t.fontSize) }
+        if author == .student && !t.rich { return StudentText.font(style: t.style, size: t.fontSize) }
         return NoteFonts.tutorFont(style: t.style, size: t.fontSize, hand: env.hand)
     }
 
@@ -44,8 +44,9 @@ enum ElementRenderer {
         let f = font(for: t, author: author, env: env)
         let inset = textInsets(t.style)
         if author == .student && !t.rich {
-            let s = PlainTextRenderer.size(t.text, font: f, width: width - inset.left - inset.right)
-            return CGSize(width: width, height: s.height + inset.top + inset.bottom)
+            // Formatted (or plain older) student text, measured exactly as the editor shows it.
+            let s = StudentText.size(StudentText.attributedString(t), width: width - inset.left - inset.right)
+            return CGSize(width: width, height: max(s.height, f.lineHeight) + inset.top + inset.bottom)
         }
         let l = richLayout(t.text, font: f, width: width - inset.left - inset.right, rich: t.rich)
         return CGSize(width: width, height: max(f.lineHeight, l.size.height) + inset.top + inset.bottom)
@@ -55,6 +56,10 @@ enum ElementRenderer {
     static func fittedTextWidth(_ t: TextContent, author: Author, maxWidth: CGFloat, env: RenderEnvironment) -> CGFloat {
         let f = font(for: t, author: author, env: env)
         let inset = textInsets(t.style)
+        if author == .student && !t.rich {
+            let s = StudentText.size(StudentText.attributedString(t), width: maxWidth - inset.left - inset.right)
+            return min(maxWidth, s.width + inset.left + inset.right + 4)
+        }
         let l = richLayout(t.text, font: f, width: maxWidth - inset.left - inset.right, rich: t.rich)
         return min(maxWidth, l.size.width + inset.left + inset.right + 4)
     }
@@ -219,7 +224,7 @@ enum ElementRenderer {
         }
         let inner = rect.inset(by: inset)
         if author == .student && !t.rich {
-            PlainTextRenderer.draw(t.text, in: inner, font: f, color: color, ctx: ctx)
+            StudentText.draw(StudentText.attributedString(t), in: inner, ctx: ctx)
             return
         }
         let l = richLayout(t.text, font: f, width: inner.width, rich: t.rich, live: live)

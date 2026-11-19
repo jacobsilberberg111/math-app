@@ -91,6 +91,10 @@ struct CanvasToolConfig: Equatable {
     var highlighterWidth: CGFloat = 18
     var eraserMode: EraserMode = .stroke
     var eraserWidth: CGFloat = 20
+    var eraserAutoDeselect = false
+    var textColorHex = "#1F2328"
+    var textSize: CGFloat = 18
+    var textStyle: TextStyle = .typed
     var shapeRecognition = true
     var fingerDrawing = false
     var rulerActive = false
@@ -107,7 +111,8 @@ struct CanvasToolConfig: Equatable {
         case .highlighter:
             return PKInkingTool(.marker, color: UIColor(hex: highlighterColorHex), width: highlighterWidth)
         case .eraser:
-            return eraserMode == .stroke ? PKEraserTool(.vector) : PKEraserTool(.bitmap, width: eraserWidth)
+            // Both modes use the chosen size (the hover circle and the tutor-mark eraser match it).
+            return eraserMode == .stroke ? PKEraserTool(.vector, width: eraserWidth) : PKEraserTool(.fixedWidthBitmap, width: eraserWidth)
         default:
             return PKInkingTool(penStyle.inkType, color: UIColor(hex: penColorHex), width: penWidth)
         }
